@@ -186,3 +186,31 @@ func TestRejectsUntrustedMethodQueryAndRawErrorLeak(t *testing.T) {
 		t.Fatal("leaked raw input")
 	}
 }
+
+func TestRejectsCaseInsensitiveFieldAliasAndMissingInput(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "mixed-case alias must not impersonate tenant_id",
+			raw:  strings.Replace(body(), `"tenant_id":"t-1"`, `"Tenant_id":"t-1"`, 1),
+		},
+		{
+			name: "input is required and cannot be implicitly synthesized",
+			raw:  strings.Replace(body(), `,"input":{"message":"hello"}`, "", 1),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newHandler(t)
+			w := send(app.h, http.MethodPost, "/internal/v1/run-intents:accept", tc.raw, true)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("ambiguous required field accepted: %d %s", w.Code, w.Body.String())
+			}
+			if len(app.store.receipts) != 0 {
+				t.Fatal("ambiguous field created Run")
+			}
+		})
+	}
+}
