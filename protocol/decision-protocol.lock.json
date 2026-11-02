@@ -1,0 +1,13 @@
+{
+  "protocol": "avaargsh/agent-decision",
+  "protocol_version": "0.1",
+  "git_commit": "cfcb5f28f824d933bf4aca08c4708659b93cf50a",
+  "schema_paths": [
+    "protocol/v0.1/schemas/decision-turn-request.schema.json",
+    "protocol/v0.1/schemas/decision-turn-response.schema.json",
+    "protocol/v0.1/schemas/decision-turn-error.schema.json"
+  ],
+  "fixture_root": "protocol/v0.1/fixtures/",
+  "canonical_json": "RFC 8785",
+  "note": "Update this lock only after reviewing and accepting a new immutable protocol revision."
+}
