@@ -3,6 +3,7 @@ package decision
 import (
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 type Turn struct {
@@ -24,14 +25,17 @@ type Result struct {
 
 func (t Turn) Validate() error {
 	if t.ProtocolVersion != "v0.1" { return errors.New("unsupported protocol version") }
-	for _, s := range []string{t.InvocationID, t.TenantID, t.AgentID, t.RunID, t.TurnID, t.UserInput} {
-		if strings.TrimSpace(s) == "" || len(s) > 4096 { return errors.New("invalid decision turn field") }
+	for _, s := range []string{t.InvocationID,t.TenantID,t.AgentID,t.RunID,t.TurnID,t.UserInput} {
+		if !utf8.ValidString(s) || strings.TrimSpace(s)=="" || len(s)>4096 {
+			return errors.New("invalid decision turn field")
+		}
 	}
 	return nil
 }
 
 func (r Result) Validate(t Turn) error {
-	if r.ProtocolVersion != "v0.1" || r.InvocationID != t.InvocationID || r.Kind != "final" || strings.TrimSpace(r.Text) == "" {
+	if r.ProtocolVersion!="v0.1" || r.InvocationID!=t.InvocationID || r.Kind!="final" ||
+		strings.TrimSpace(r.Text)=="" || !utf8.ValidString(r.Text) || len(r.Text)>8192 {
 		return errors.New("invalid decision result")
 	}
 	return nil
