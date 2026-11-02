@@ -5,7 +5,7 @@ ALTER TABLE runs ADD COLUMN source_request_digest TEXT;
 ALTER TABLE runs ADD CONSTRAINT runs_intent_unique UNIQUE (run_intent_id);
 -- PostgreSQL may generate runs_workflow_id_check1 for an inline CHECK
 -- on a UNIQUE column. Resolve the real constraint name, never guess.
-DO $
+DO $acp_migration$
 DECLARE check_name text;
 BEGIN
   SELECT c.conname INTO check_name
@@ -17,7 +17,7 @@ BEGIN
   END IF;
   EXECUTE format('ALTER TABLE runs DROP CONSTRAINT %I', check_name);
 END
-$;
+$acp_migration$;
 ALTER TABLE runs ADD CONSTRAINT runs_workflow_id_check CHECK (
     (run_intent_id IS NULL AND workflow_id = 'agent-run/' || run_id::text)
     OR (run_intent_id IS NOT NULL AND workflow_id = 'agent-run/v1/' || run_id::text)
