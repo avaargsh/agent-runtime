@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"testing"
+	"strings"
 
 	"github.com/avaargsh/agent-runtime/internal/activities"
 	"github.com/avaargsh/agent-runtime/internal/decision"
@@ -66,4 +67,33 @@ func TestRunRejectsMismatchedActivityResult(t *testing.T) {
 		t.Fatal("workflow accepted mismatched invocation result")
 	}
 	env.AssertExpectations(t)
+}
+
+func TestWorkflowIDIsCanonicalAndStable(t *testing.T) {
+	first, err := WorkflowID("run-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := WorkflowID("run-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "agent-run/v1/run-123" || second != first {
+		t.Fatalf("workflow id is not canonical/stable: %q %q", first, second)
+	}
+	other, err := WorkflowID("run-456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other == first {
+		t.Fatal("different Runs must have different Workflow IDs")
+	}
+}
+
+func TestWorkflowIDRejectsAmbiguousRunIDs(t *testing.T) {
+	for _, runID := range []string{"", " ", " run-1", "run-1 ", "a/b", "a?b", "a#b", strings.Repeat("x", 257)} {
+		if _, err := WorkflowID(runID); err == nil {
+			t.Fatalf("accepted invalid run id %q", runID)
+		}
+	}
 }
