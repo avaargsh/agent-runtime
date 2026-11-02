@@ -236,4 +236,3 @@ func scanRun(row rowScanner) (run.Run, error) {
 }
 
 var _ run.Repository = (*Store)(nil)
-
