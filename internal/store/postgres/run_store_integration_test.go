@@ -178,11 +178,11 @@ func TestCreateOrGetRollsBackRunWhenOutboxInsertFails(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := pool.Exec(ctx, `
-		CREATE FUNCTION reject_run_start_outbox() RETURNS trigger AS $
-		BEGIN
-			RAISE EXCEPTION 'forced outbox insert failure';
-		END;
-		$ LANGUAGE plpgsql;
+		CREATE FUNCTION reject_run_start_outbox() RETURNS trigger
+		LANGUAGE plpgsql
+		AS 'BEGIN
+			RAISE EXCEPTION ''forced outbox insert failure'';
+		END;';
 		CREATE TRIGGER reject_run_start_outbox
 		BEFORE INSERT ON runtime_outbox
 		FOR EACH ROW EXECUTE FUNCTION reject_run_start_outbox();
