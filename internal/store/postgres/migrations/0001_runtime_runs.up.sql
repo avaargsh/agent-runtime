@@ -6,12 +6,13 @@ CREATE TABLE runs (
     session_id TEXT NOT NULL CHECK (length(session_id) BETWEEN 1 AND 255),
     idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 255),
     request_digest TEXT NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
-    workflow_id TEXT NOT NULL UNIQUE CHECK (length(workflow_id) BETWEEN 1 AND 512),
+    workflow_id TEXT NOT NULL UNIQUE CHECK (workflow_id = 'agent-run/' || run_id::text),
     status TEXT NOT NULL CHECK (status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED')),
     input JSONB NOT NULL CHECK (jsonb_typeof(input) = 'object'),
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    CONSTRAINT runs_tenant_idempotency_key_unique UNIQUE (tenant_id, idempotency_key)
+    CONSTRAINT runs_tenant_idempotency_key_unique UNIQUE (tenant_id, idempotency_key),
+    CONSTRAINT runs_tenant_run_unique UNIQUE (tenant_id, run_id)
 );
 
 CREATE INDEX runs_tenant_created_at_idx
@@ -20,7 +21,7 @@ CREATE INDEX runs_tenant_created_at_idx
 CREATE TABLE runtime_outbox (
     outbox_id UUID PRIMARY KEY,
     tenant_id TEXT NOT NULL,
-    aggregate_id UUID NOT NULL REFERENCES runs(run_id) ON DELETE RESTRICT,
+    aggregate_id UUID NOT NULL,
     event_type TEXT NOT NULL CHECK (length(event_type) BETWEEN 1 AND 128),
     payload JSONB NOT NULL CHECK (jsonb_typeof(payload) = 'object'),
     created_at TIMESTAMPTZ NOT NULL,
@@ -28,7 +29,9 @@ CREATE TABLE runtime_outbox (
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     delivered_at TIMESTAMPTZ,
     last_error TEXT,
-    CONSTRAINT runtime_outbox_aggregate_event_unique UNIQUE (tenant_id, aggregate_id, event_type)
+    CONSTRAINT runtime_outbox_aggregate_event_unique UNIQUE (tenant_id, aggregate_id, event_type),
+    CONSTRAINT runtime_outbox_run_tenant_fk FOREIGN KEY (tenant_id, aggregate_id)
+        REFERENCES runs (tenant_id, run_id) ON DELETE RESTRICT
 );
 
 CREATE INDEX runtime_outbox_pending_idx
