@@ -59,7 +59,7 @@ func (f *fakeStore) LookupIntent(_ context.Context, tenant, id, digest string) (
 func authorized(r *http.Request) {
 	uri, _ := url.Parse(acpID)
 	cert := &x509.Certificate{URIs: []*url.URL{uri}}
-	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}, VerifiedChains: [][]*x509.Certificate{{cert}}}
+	r.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13, PeerCertificates: []*x509.Certificate{cert}, VerifiedChains: [][]*x509.Certificate{{cert}}}
 }
 func body() string {
 	return `{"tenant_id":"t-1","run_intent_id":"` + intentID + `","request_digest":"sha256:` + strings.Repeat("a", 64) + `","agent_id":"agent","agent_release_id":"rel","session_id":"s","input":{"message":"hello"}}`
