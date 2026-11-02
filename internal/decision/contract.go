@@ -36,7 +36,7 @@ func (t Turn) Validate() error {
 }
 
 func (r Result) Validate(t Turn) error {
-	if r.ProtocolVersion != "v0.1" || r.InvocationID != t.InvocationID || r.Kind != "final" ||
+	if r.ProtocolVersion != "v0.1" || r.InvocationID != t.InvocationID || r.Kind != "final_response" ||
 		strings.TrimSpace(r.Text) == "" || !utf8.ValidString(r.Text) || len(r.Text) > 8192 {
 		return errors.New("invalid decision result")
 	}
