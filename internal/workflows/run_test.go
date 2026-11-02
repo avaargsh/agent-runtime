@@ -25,7 +25,7 @@ func TestRunWorkflow(t *testing.T) {
 	s := &testsuite.WorkflowTestSuite{}
 	env := s.NewTestWorkflowEnvironment()
 	turn := sampleTurn()
-	want := decision.Result{ProtocolVersion: "v0.1", InvocationID:    "inv-1", Kind: "final", Text: "ok"}
+	want := decision.Result{ProtocolVersion: "v0.1", InvocationID: "inv-1", Kind: "final", Text: "ok"}
 	env.RegisterActivity(&activities.Activities{})
 	env.OnActivity("InvokeDecision", mock.Anything, turn).Return(want, nil)
 
@@ -58,7 +58,7 @@ func TestRunRejectsMismatchedActivityResult(t *testing.T) {
 	s := &testsuite.WorkflowTestSuite{}
 	env := s.NewTestWorkflowEnvironment()
 	turn := sampleTurn()
-	bad := decision.Result{ProtocolVersion: "v0.1", InvocationID:    "another", Kind: "final", Text: "ok"}
+	bad := decision.Result{ProtocolVersion: "v0.1", InvocationID: "another", Kind: "final", Text: "ok"}
 	env.RegisterActivity(&activities.Activities{})
 	env.OnActivity("InvokeDecision", mock.Anything, turn).Return(bad, nil)
 	env.ExecuteWorkflow(Run, turn)
