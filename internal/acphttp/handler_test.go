@@ -32,6 +32,7 @@ func (f *fakeStore) AcceptIntent(_ context.Context, request run.IntentStartReque
 	if f.receipts==nil { f.receipts=make(map[string]run.IntentReceipt) }
 	if r,ok:=f.receipts[request.RunIntentID];ok {
 		if r.TenantID!=request.TenantID || r.RequestDigest!=request.RequestDigest {return run.IntentReceipt{},run.ErrIdempotencyConflict}
+		r.Created=false
 		return r,nil
 	}
 	r:=run.IntentReceipt{TenantID:request.TenantID,RunIntentID:request.RunIntentID,RequestDigest:request.RequestDigest,RunID:"11111111-1111-4111-8111-222222222222",WorkflowID:"agent-run/v1/11111111-1111-4111-8111-222222222222",Created:true}
