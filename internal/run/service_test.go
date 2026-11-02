@@ -40,7 +40,7 @@ func validRequest() run.StartRequest {
 		AgentReleaseID: "release-1",
 		SessionID:      "session-1",
 		IdempotencyKey: "request-1",
-		Input:          []byte(`{"message":"hello"}`),
+		Input:          []byte(`{"message":"hello","mode":"fast"}`),
 	}
 }
 
@@ -62,7 +62,7 @@ func TestStartRunReturnsStableRunForEquivalentJSON(t *testing.T) {
 	}
 
 	secondRequest := validRequest()
-	secondRequest.Input = []byte(`{ "message" : "hello" }`)
+	secondRequest.Input = []byte(`{ "mode" : "fast", "message" : "hello" }`)
 	second, err := service.Start(context.Background(), secondRequest)
 	if err != nil {
 		t.Fatalf("second Start() error = %v", err)
