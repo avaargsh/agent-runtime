@@ -20,7 +20,7 @@ No service may infer another service's authoritative state from a timeout, missi
 | Identifier | Creator / authority | Lifetime and retry rule |
 |---|---|---|
 | `run_id` | Runtime | One logical Run; stable across all retries |
-| `workflow_id` | Runtime mapping to Temporal | Deterministic from run_id; never random per retry |
+| `workflow_id` | Runtime mapping to Temporal | `agent-run:v1:<run_id>`; run_id must be globally unique in the Temporal namespace; never random per retry |
 | `turn_id` | Runtime | One logical Decision Turn |
 | `invocation_id` | Runtime | One logical plugin invocation; stable across Activity retries |
 | `runtime_attempt_id` | Runtime | One Runtime-owned Task/Run execution attempt; does not change for Temporal Activity retries |
@@ -31,7 +31,7 @@ No service may infer another service's authoritative state from a timeout, missi
 | `attempt_id` | EngageGuard | One Guard-owned external dispatch attempt; do not alias to runtime_attempt_id |
 | `receipt_id` | Trusted Executor | One immutable execution receipt |
 
-The EngageGuard `attempt_id` meaning is fixed by OperationRecord/ExecutionReceipt. Runtime uses the distinct name `runtime_attempt_id`. Temporal's numeric Activity attempt is not persisted as either identifier.
+The EngageGuard `attempt_id` meaning is fixed by OperationRecord/ExecutionReceipt. Runtime uses the distinct name `runtime_attempt_id`. Temporal's numeric Activity attempt is not persisted as either identifier. Runtime guarantees `run_id` uniqueness within the Temporal namespace; if an upstream ID is only tenant-scoped, Runtime must create a globally unique canonical run_id before Workflow start.
 
 ## 3. Request and response protocol
 

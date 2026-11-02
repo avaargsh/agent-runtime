@@ -18,7 +18,7 @@ Runtime never invokes a protected executor directly. EngageGuard owns authorizat
 
 ## Identity
 
-Stable `workflow_id` is derived from canonical `run_id` and is not random per retry. `invocation_id` identifies one logical Decision Turn and is stable across Activity retries. `runtime_attempt_id` identifies a Runtime-owned Task/Run execution attempt; Temporal Activity retry counters are not business IDs. EngageGuard creates `operation_id` and its own `attempt_id`; Runtime must not generate or reinterpret either. Run start idempotency is enforced by Runtime DB and an explicit Temporal Workflow ID conflict/reuse policy.
+Stable `workflow_id` is `agent-run:v1:<run_id>`; Runtime guarantees `run_id` is globally unique within the Temporal namespace and does not generate a random Workflow ID per retry. `invocation_id` identifies one logical Decision Turn and is stable across Activity retries. `runtime_attempt_id` identifies a Runtime-owned Task/Run execution attempt; Temporal Activity retry counters are not business IDs. EngageGuard creates `operation_id` and its own `attempt_id`; Runtime must not generate or reinterpret either. Run start idempotency is enforced by Runtime DB and an explicit Temporal Workflow ID conflict/reuse policy.
 
 ## Determinism
 

@@ -36,4 +36,4 @@ Framework metadata is bounded, diagnostic, and non-authoritative. Unknown fields
 
 Plugin identity is workload-authenticated. No provider secrets, Permit tokens, direct executor credentials, or privileged tool access are sent to the plugin. Tenant/principal are derived from trusted authentication context, not body fields.
 
-ActionProposal is untrusted input. Runtime normalizes it and submits it to EngageGuard for fresh authorization and operation creation. EngageGuard/Trusted Executor remain the only path for protected side effects.
+ActionProposal is untrusted input. Runtime validates the protocol and maps it into an ActionRequest; EngageGuard performs authoritative action canonicalization, computes ActionHash, and applies fresh authorization. EngageGuard/Trusted Executor remain the only path for protected side effects.

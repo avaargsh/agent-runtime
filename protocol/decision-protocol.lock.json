@@ -1,7 +1,7 @@
 {
   "protocol": "avaargsh/agent-decision",
   "protocol_version": "0.1",
-  "git_commit": "cfcb5f28f824d933bf4aca08c4708659b93cf50a",
+  "git_commit": "fd03403fbdc761a79e01d531cea340e6fbe97f7e",
   "schema_paths": [
     "protocol/v0.1/schemas/decision-turn-request.schema.json",
     "protocol/v0.1/schemas/decision-turn-response.schema.json",
