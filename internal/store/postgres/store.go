@@ -86,13 +86,17 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if !v2Applied {
 		script, err := migrationFiles.ReadFile("migrations/0002_acp_run_intent.up.sql")
-		if err != nil { return fmt.Errorf("read ACP migration: %w", err) }
+		if err != nil {
+			return fmt.Errorf("read ACP migration: %w", err)
+		}
 		if _, err := tx.Exec(ctx, string(script)); err != nil {
 			return fmt.Errorf("apply ACP migration: %w", err)
 		}
 		if _, err := tx.Exec(ctx,
 			"INSERT INTO runtime_schema_migrations (version) VALUES (2)",
-		); err != nil { return fmt.Errorf("record ACP migration: %w", err) }
+		); err != nil {
+			return fmt.Errorf("record ACP migration: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
