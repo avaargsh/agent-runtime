@@ -136,6 +136,77 @@ func TestCreateOrGetRejectsChangedDigestForSameKey(t *testing.T) {
 	}
 }
 
+func TestCreateOrGetScopesIdempotencyKeysByTenant(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+
+	first, created, err := store.CreateOrGet(ctx, candidate("00000000-0000-4000-8000-000000000001"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("first tenant Run must be created")
+	}
+
+	otherTenant := candidate("00000000-0000-4000-8000-000000000002")
+	otherTenant.TenantID = "tenant-2"
+	second, created, err := store.CreateOrGet(ctx, otherTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("same idempotency key in another tenant must create a separate Run")
+	}
+	if first.ID == second.ID {
+		t.Fatalf("different tenants received the same Run ID %q", first.ID)
+	}
+
+	var runs, outbox int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runs").Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_outbox").Scan(&outbox); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 2 || outbox != 2 {
+		t.Fatalf("persisted runs=%d outbox=%d, want 2 and 2", runs, outbox)
+	}
+}
+
+func TestCreateOrGetRollsBackRunWhenOutboxInsertFails(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+
+	_, err := pool.Exec(ctx, `
+		CREATE FUNCTION reject_run_start_outbox() RETURNS trigger AS $
+		BEGIN
+			RAISE EXCEPTION 'forced outbox insert failure';
+		END;
+		$ LANGUAGE plpgsql;
+		CREATE TRIGGER reject_run_start_outbox
+		BEFORE INSERT ON runtime_outbox
+		FOR EACH ROW EXECUTE FUNCTION reject_run_start_outbox();
+	`)
+	if err != nil {
+		t.Fatalf("install outbox failure trigger: %v", err)
+	}
+
+	if _, _, err := store.CreateOrGet(ctx, candidate("00000000-0000-4000-8000-000000000001")); err == nil {
+		t.Fatal("CreateOrGet() succeeded despite forced outbox failure")
+	}
+
+	var runs, outbox int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runs").Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_outbox").Scan(&outbox); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 0 || outbox != 0 {
+		t.Fatalf("failed transaction left runs=%d outbox=%d, want 0 and 0", runs, outbox)
+	}
+}
+
 func TestCreateOrGetSerializesConcurrentDuplicateStarts(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
