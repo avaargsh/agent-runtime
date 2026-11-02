@@ -82,7 +82,7 @@ Tenant and Run ownership must be derived from authenticated context and the cano
 
 Paths marked **planned** are target test locations, not claims that files already exist.
 
-| Gate | Acceptance target | Minimum regression test | Failure判定 | Evidence required |
+| Gate | Acceptance target | Minimum regression test | Failure condition | Evidence required |
 |---|---|---|---|---|
 | P0 — Run identity | One logical Run has one stable Runtime ID and Temporal Workflow ID derived from it. | **Planned:** `internal/run/start_test.go`; duplicate StartRun with same tenant/idempotency key and request digest. | Duplicate Run/Workflow created, or same key with different request accepted. | API test, DB unique constraint, Temporal start result and Workflow ID. |
 | P0 — Run persistence | Run/Task/Attempt metadata survives API and Worker restarts; Attempt IDs differ while Run ID remains stable. | **Planned:** `internal/store/postgres/run_repository_test.go`; restart and concurrent update tests. | Lost state, cross-Run update, or Attempt overwrites another Attempt. | PostgreSQL integration report, row snapshots, restart log. |
