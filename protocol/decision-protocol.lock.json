@@ -1,7 +1,7 @@
 {
   "protocol": "avaargsh/agent-decision",
   "protocol_version": "0.1",
-  "git_commit": "62087dd987ff407a4375931436574d824fc87ea4",
+  "git_commit": "07a37e5e7b777cc1510e3bf408de081fea3de5c1",
   "schema_paths": [
     "protocol/v0.1/schemas/decision-turn-request.schema.json",
     "protocol/v0.1/schemas/decision-turn-response.schema.json",
@@ -11,6 +11,7 @@
   "canonical_json": "RFC 8785",
   "note": "Update this lock only after reviewing and accepting a new immutable protocol revision.",
   "additional_conformance_vectors": [
-    "protocol/v0.1/fixtures/idempotency/request-digest.json"
+    "protocol/v0.1/fixtures/idempotency/request-digest.json",
+    "tests/test_boundary.py"
   ]
 }
