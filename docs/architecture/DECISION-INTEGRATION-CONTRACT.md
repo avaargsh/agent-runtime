@@ -28,7 +28,8 @@ No service may infer another service's authoritative state from a timeout, missi
 | `run_attempt_id` | Runtime | One Runtime-owned Task/Run execution attempt; does not change for Temporal Activity retries |
 | Temporal Activity attempt counter | Temporal | SDK metadata only; never used as a business identifier |
 | `proposal_id` | Agent Decision | Stable within the stored response for one invocation; unique within that invocation |
-| `action_operation_id` (ActionRequest wire field: `operation_id`) | Runtime creates; EngageGuard owns the record | Created once per admitted ActionProposal and reused for every submission/retry; no separate Guard idempotency key |
+| `guard_submission_key` (ActionRequest `Idempotency-Key`) | Runtime | Persisted once per admitted proposal; reused for each Guard submission retry; distinct from action_hash and operation_id |
+| `operation_id` | EngageGuard | Created by Guard on first accepted submission; same tenant + key + request digest resolves the same Operation |
 | `executor_attempt_id` (receipt wire field: `attempt_id`) | EngageGuard / Trusted Executor | One concrete protected-action execution attempt; never alias to run_attempt_id or Temporal Activity attempt |
 | `receipt_id` | Trusted Executor | One immutable execution receipt |
 | `compute_operation_id` | Compute Control Plane | One immutable provider-side compute mutation; distinct from Action operation_id |
@@ -67,10 +68,10 @@ After validation, proposals are processed in order, each as a separate Guard ope
 
 ### Guard operation
 
-- Runtime creates and persists one action_operation_id for each admitted proposal before calling Guard; ActionRequest v1 serializes it as operation_id. There is no second idempotency_key at this boundary.
-- The same operation_id and semantically identical ActionRequest are reused across HTTP/Temporal Activity retries. It is not derived from run_attempt_id or a Temporal Activity counter.
-- Guard enforces tenant + operation_id uniqueness and compares the canonical ActionRequest digest. Same ID + same request returns the same Action Operation; same ID + different request/binding returns 409 IDEMPOTENCY_KEY_REUSED.
-- Guard creates executor_attempt_id for each concrete execution attempt and owns the OperationJournal record and Receipt.
+- Runtime creates and durably persists one guard_submission_key per admitted proposal before calling Guard. The Guard ActionRequest includes this opaque key in the `Idempotency-Key` header; the plugin must not set it.
+- The same guard_submission_key and byte-equivalent logical ActionRequest are reused across HTTP/Temporal Activity retries. The key is not derived from run_attempt_id or a Temporal Activity counter.
+- Guard enforces tenant + guard_submission_key uniqueness and compares canonical ActionRequest digest. Same key + same request returns the original Guard-generated operation_id; same key + different request/binding returns 409 IDEMPOTENCY_KEY_REUSED.
+- Guard creates operation_id and executor_attempt_id, owns the OperationJournal record and trusted Receipt. Runtime persists the returned operation_id for query/reconciliation; it must not invent one after an ACK loss.
 - action_hash is an authorization binding, not an idempotency key. Distinct user intents may have identical action hashes.
 
 ## 5. Temporal Activity retry policy
@@ -80,12 +81,12 @@ Every Activity must declare StartToClose, ScheduleToClose, maximum attempts, bac
 | Activity | Safe retry condition | Stable identity |
 |---|---|---|
 | `InvokeDecision` | Only transient transport/dependency errors, RATE_LIMITED, or INVOCATION_IN_PROGRESS; stop at deadline | Same invocation_id + request digest |
-| `EnsureGuardOperation` | Network ambiguity / transient 5xx only; same request and operation ID | Same action_operation_id (wire operation_id) |
+| `EnsureGuardOperation` | Network ambiguity / transient 5xx only; same request and persisted key | Same guard_submission_key; Guard returns operation_id |
 | `GetOperationStatus` | Read-only query; bounded retry | Same operation_id |
 | `WaitForApproval` | Wait on Temporal Signal/Update; no model retry loop | Same approval/operation reference |
 | `PersistRunProjection` | Idempotent projection upsert | Same source event / operation version |
 
-Do not retry malformed request/response, unknown protocol/capability/schema version, authentication/authorization failures, invocation ID conflicts, Action operation ID payload conflicts, expired deadline, or policy denial.
+Do not retry malformed request/response, unknown protocol/capability/schema version, authentication/authorization failures, invocation ID conflicts, Guard Idempotency-Key payload conflicts, expired deadline, or policy denial.
 
 The Runtime must not define a generic `DispatchProviderOperation` Activity that independently calls the provider. Guard submission creates/ensures an Operation; the Trusted Executor dispatches under Guard's Permit/Operation Journal protocol.
 
@@ -104,7 +105,7 @@ EngageGuard is authoritative for Operation states. Runtime stores a read/query p
 | MANUAL_REVIEW | Pause for authorized human resolution; no automatic retry |
 | DENIED / REJECTED / EXPIRED / CANCELLED | Stop the proposal path; do not bypass Guard |
 
-A timeout or lost ACK after the request may have reached Guard is an ambiguous transport outcome, not a failed operation. Runtime repeats only the idempotent EnsureGuardOperation request with the same action_operation_id, then queries the same operation_id. It never creates a new action operation to escape UNKNOWN.
+A timeout or lost ACK after the request may have reached Guard is an ambiguous transport outcome, not a failed operation. Runtime repeats only the idempotent EnsureGuardOperation request with the same guard_submission_key, recovers the original operation_id, then queries that operation_id. It never creates a new key or action operation to escape UNKNOWN.
 
 Only the service that owns the side effect may determine whether it is safe to recover. EngageGuard reconciles the protected Action Operation; Compute CP reconciles a provider-side ComputeOperation. If a provider supports neither idempotency nor status query, the ComputeOperation remains UNKNOWN or moves to MANUAL_REVIEW; no automatic retry.
 
@@ -142,8 +143,8 @@ Error code is machine-readable and stable. Human-readable message is diagnostic 
 | P05 | Same invocation_id, same digest, completed | Replay stored response |
 | P06 | Same invocation_id, different digest | INVOCATION_ID_REUSED; no model execution |
 | P07 | Decision Activity retry after lost ACK | Same invocation_id/deadline/digest |
-| P08 | Guard accepted ActionRequest but HTTP ACK lost | Same action_operation_id returns the same Guard operation_id/record |
-| P09 | Same Guard operation_id, changed payload | 409; never create second operation |
+| P08 | Guard accepted ActionRequest but HTTP ACK lost | Same persisted guard_submission_key returns the same Guard-generated operation_id/record |
+| P09 | Same Guard submission key, changed payload | 409; never create second operation |
 | P10 | Guard Operation is UNKNOWN / RECONCILING | No redispatch; query/reconcile same operation_id |
 | P11 | Provider success but receipt ACK lost | UNKNOWN until the owning enforcement point verifies receipt/provider evidence |
 | P12 | Runtime Activity retries | No new run_attempt_id or executor_attempt_id is inferred from Temporal counter |
@@ -164,3 +165,10 @@ Error code is machine-readable and stable. Human-readable message is diagnostic 
 - Runtime cannot call protected providers directly.
 - UNKNOWN, RECONCILING, and MANUAL_REVIEW block blind redispatch.
 - Lost ACK, restart, cancellation, duplicate start, and stale-worker fault injection pass.
+
+
+## 12. Cross-repository compatibility gate (2026-11-02 independent review)
+
+The previous Runtime draft assumed the caller could allocate `action_operation_id` as the Guard wire `operation_id`. This conflicts with the existing EngageGuard v2.1 RFC, which defines a Guard-generated `operation_id` and a client-generated `Idempotency-Key`. This draft now follows the latter behavior as the integration baseline; **do not ship the Guard adapter until the actual EngageGuard HTTP contract and idempotency-lookup behavior are confirmed**. A timeout must not cause a new key to be generated. Test the lost-ACK scenario against a real Guard implementation before marking this PR Ready for Review.
+
+The pure-Go `internal/recovery` package is limited to safe consumer decisions and has no authority to dispatch an external side effect. Its green tests do not constitute a Temporal replay or provider-side recovery test.
