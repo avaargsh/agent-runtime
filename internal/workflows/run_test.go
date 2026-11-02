@@ -1,8 +1,8 @@
 package workflows
 
 import (
-	"testing"
 	"strings"
+	"testing"
 
 	"github.com/avaargsh/agent-runtime/internal/activities"
 	"github.com/avaargsh/agent-runtime/internal/decision"
