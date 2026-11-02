@@ -1,6 +1,6 @@
 # Decision v0.1 protocol lock
 
-The canonical protocol lives at [avaargsh/agent-decision](https://github.com/avaargsh/agent-decision/tree/07a37e5e7b777cc1510e3bf408de081fea3de5c1/protocol/v0.1).
+The canonical protocol lives at [avaargsh/agent-decision](https://github.com/avaargsh/agent-decision/tree/5c4690f8452fed15ff70bce1cdfd1370f9d4be5e/protocol/v0.1).
 
 `decision-protocol.lock.json` pins the exact Agent Decision commit used by Runtime. It is intentionally not the moving `main` or PR branch head.
 
