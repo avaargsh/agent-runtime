@@ -17,9 +17,9 @@ import (
 )
 
 var (
-	ErrInvalidRequest          = errors.New("invalid StartRun request")
-	ErrIdempotencyConflict     = errors.New("idempotency key was already used with a different request")
-	ErrRepositoryUnavailable   = errors.New("run repository is unavailable")
+	ErrInvalidRequest        = errors.New("invalid StartRun request")
+	ErrIdempotencyConflict   = errors.New("idempotency key was already used with a different request")
+	ErrRepositoryUnavailable = errors.New("run repository is unavailable")
 )
 
 const (
