@@ -1,12 +1,13 @@
 # Agent Runtime Implementation Plan
 
-1. Freeze Run/Attempt/Operation identifiers and Agent Plugin Contract.
-2. Implement Go service bootstrap, DB schema, Run idempotency and projection.
-3. Implement Go Temporal Client and deterministic Run Workflow.
-4. Implement Activities for Decision invocation and EngageGuard action execution.
-5. Implement approval wait using Temporal Signal/Update; no polling loop.
-6. Add cancellation, timeout, retry and worker versioning policy.
-7. Build Python plugin reference and cross-language contract tests.
-8. Add replay, duplicate start, lost ACK, restart and cancellation tests.
+1. Freeze Run/Runtime Attempt/Decision Invocation/Guard Operation identifiers and pin the Agent Decision v0.1 protocol.
+2. Implement Go service bootstrap, PostgreSQL schema, Run start idempotency, invocation correlation, and query projection.
+3. Implement Temporal Client and deterministic Run Workflow with explicit Workflow ID conflict/reuse policy.
+4. Implement Decision Activity with strict schema/semantic validation and bounded retry policy.
+5. Implement idempotent EnsureGuardOperation Activity; persist idempotency key before network call and persist returned operation_id.
+6. Implement read-only operation status handling, approval wait via Signal/Update, and Guard-owned UNKNOWN reconciliation.
+7. Add cancellation, deadline propagation, Activity timeout/retry configuration, and worker versioning policy.
+8. Add Go/Python/TypeScript shared protocol fixture conformance and failure-injection tests.
+9. Verify replay, duplicate start, lost Decision ACK, lost Guard ACK, lost Receipt ACK, restart, cancellation, and stale-worker behavior.
 
-Exit gate: same logical Run has one stable Workflow ID; plugin cannot execute privileged effects; Temporal replay is deterministic; UNKNOWN action blocks blind retry.
+Exit gate: one logical Run has one stable Workflow ID; plugin cannot execute privileged effects; Temporal replay is deterministic; retries reuse stable intent IDs; UNKNOWN / RECONCILING / MANUAL_REVIEW block blind redispatch.
