@@ -6,6 +6,7 @@ package acphttp
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -39,7 +40,8 @@ type handler struct {
 func NewHandler(store Store, expectedSPIFFEID string) (http.Handler, error) {
 	u, err := url.Parse(expectedSPIFFEID)
 	if store == nil || err != nil || u.Scheme != "spiffe" || u.Host == "" ||
-		u.Path == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+		u.Path == "" || u.User != nil || u.Opaque != "" || u.RawPath != "" ||
+		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
 		u.String() != expectedSPIFFEID {
 		return nil, errors.New("invalid ACP trust configuration")
 	}
@@ -51,11 +53,15 @@ func NewHandler(store Store, expectedSPIFFEID string) (http.Handler, error) {
 // chains. This does not itself verify certificates: the TLS server must use
 // tls.RequireAndVerifyClientCert with a configured ClientCAs trust store.
 func (h *handler) verifyPeer(r *http.Request) bool {
-	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 ||
+	if r.TLS == nil || !r.TLS.HandshakeComplete || r.TLS.Version < tls.VersionTLS13 ||
+		len(r.TLS.PeerCertificates) == 0 ||
 		len(r.TLS.VerifiedChains) == 0 {
 		return false
 	}
 	leaf := r.TLS.PeerCertificates[0]
+	if leaf == nil || len(leaf.URIs) != 1 || leaf.URIs[0] == nil {
+		return false
+	}
 	verified := false
 	for _, chain := range r.TLS.VerifiedChains {
 		if len(chain) == 0 {
@@ -70,12 +76,7 @@ func (h *handler) verifyPeer(r *http.Request) bool {
 	if !verified {
 		return false
 	}
-	for _, uri := range leaf.URIs {
-		if uri != nil && uri.String() == h.identity {
-			return true
-		}
-	}
-	return false
+	return leaf.URIs[0].String() == h.identity
 }
 
 func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
