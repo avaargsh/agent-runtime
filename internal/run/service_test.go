@@ -35,12 +35,12 @@ func (r *fakeRepository) CreateOrGet(_ context.Context, candidate run.Run) (run.
 
 func validRequest() run.StartRequest {
 	return run.StartRequest{
-		TenantID:        "tenant-1",
-		AgentID:         "agent-1",
-		AgentReleaseID:  "release-1",
-		SessionID:       "session-1",
-		IdempotencyKey:  "request-1",
-		Input:           []byte(`{"message":"hello"}`),
+		TenantID:       "tenant-1",
+		AgentID:        "agent-1",
+		AgentReleaseID: "release-1",
+		SessionID:      "session-1",
+		IdempotencyKey: "request-1",
+		Input:          []byte(`{"message":"hello"}`),
 	}
 }
 
@@ -109,7 +109,7 @@ func TestStartRunRejectsInvalidInput(t *testing.T) {
 
 func TestStartRunRequiresTenantAndIdempotencyKey(t *testing.T) {
 	for name, mutate := range map[string]func(*run.StartRequest){
-		"tenant": func(r *run.StartRequest) { r.TenantID = "" },
+		"tenant":          func(r *run.StartRequest) { r.TenantID = "" },
 		"idempotency key": func(r *run.StartRequest) { r.IdempotencyKey = " " },
 	} {
 		t.Run(name, func(t *testing.T) {
