@@ -122,7 +122,7 @@ func (h *handler) accept(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil || len(raw) == 0 || !utf8.Valid(raw) ||
-		validateUniqueJSON(raw) != nil {
+		validateUniqueJSON(raw) != nil || validateExactEnvelope(raw) != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
@@ -286,6 +286,29 @@ func validateUniqueJSON(raw []byte) error {
 	}
 	if _, err := decoder.Token(); err != io.EOF {
 		return errors.New("trailing JSON")
+	}
+	return nil
+}
+
+// validateExactEnvelope rejects Go encoding/json's permissive case-folded
+// struct field aliases and all missing required fields. A present "input"
+// must be an object; omission is not silently rewritten as empty input.
+func validateExactEnvelope(raw []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return errors.New("invalid ACP request envelope")
+	}
+	required := [...]string{
+		"tenant_id", "run_intent_id", "request_digest",
+		"agent_id", "agent_release_id", "session_id", "input",
+	}
+	if len(fields) != len(required) {
+		return errors.New("unexpected or missing ACP request field")
+	}
+	for _, key := range required {
+		if _, ok := fields[key]; !ok {
+			return errors.New("missing exact ACP request field")
+		}
 	}
 	return nil
 }
