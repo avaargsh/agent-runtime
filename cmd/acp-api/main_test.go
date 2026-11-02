@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"testing"
 )
 
@@ -32,10 +31,3 @@ func TestTLSConfigFailsClosedOnMissingCAOrServerKey(t *testing.T) {
 	}
 }
 
-func TestTLSConfigurationUsesVerifiedClientCertificateAndTLS13(t *testing.T) {
-	// The TLS config constructor must enforce mutual authentication; these
-	// invariants are checked by tests that generate real certificates separately.
-	if tls.RequireAndVerifyClientCert == tls.NoClientCert {
-		t.Fatal("unreachable TLS policy invariant")
-	}
-}
