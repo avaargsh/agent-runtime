@@ -72,18 +72,18 @@ func newTestStore(t *testing.T) (*pgxpool.Pool, *postgres.Store) {
 
 func candidate(id string) run.Run {
 	return run.Run{
-		ID:              id,
-		TenantID:        "tenant-1",
-		AgentID:         "agent-1",
-		AgentReleaseID:  "release-1",
-		SessionID:       "session-1",
-		IdempotencyKey:  "request-1",
-		RequestDigest:   strings.Repeat("a", 64),
-		WorkflowID:      "agent-run/" + id,
-		Status:          run.StatusQueued,
-		Input:           []byte(`{"message":"hello"}`),
-		CreatedAt:       time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC),
-		UpdatedAt:       time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC),
+		ID:             id,
+		TenantID:       "tenant-1",
+		AgentID:        "agent-1",
+		AgentReleaseID: "release-1",
+		SessionID:      "session-1",
+		IdempotencyKey: "request-1",
+		RequestDigest:  strings.Repeat("a", 64),
+		WorkflowID:     "agent-run/" + id,
+		Status:         run.StatusQueued,
+		Input:          []byte(`{"message":"hello"}`),
+		CreatedAt:      time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:      time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC),
 	}
 }
 
