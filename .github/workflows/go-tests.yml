@@ -22,6 +22,10 @@ jobs:
           go-version: '1.26.0'
       - name: Download and resolve exact Go dependencies
         run: go mod tidy
+      - name: Export generated public dependency lock for review
+        run: |
+          echo "GO_MOD_B64=$(base64 -w0 go.mod)"
+          echo "GO_SUM_B64=$(base64 -w0 go.sum)"
       - name: Run tests with race detector
         run: go test -race -count=1 ./...
       - name: Vet
