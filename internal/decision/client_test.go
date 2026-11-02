@@ -26,7 +26,7 @@ func TestInvokeFinal(t *testing.T) {
 			t.Error("unexpected request")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final","text":"ok"}`)
+		fmt.Fprint(w, `{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final_response","text":"ok"}`)
 	})
 	out, err := (Client{Endpoint: url}).Invoke(context.Background(), sample())
 	if err != nil || out.Text != "ok" {
@@ -36,11 +36,11 @@ func TestInvokeFinal(t *testing.T) {
 
 func TestInvalidResponses(t *testing.T) {
 	cases := []string{
-		`{"protocol_version":"v0.1","invocation_id":"wrong","kind":"final","text":"ok"}`,
-		`{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final","text":"ok","text":"dup"}`,
-		`{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final","text":"ok","extra":"bad"}`,
-		`{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final"}`,
-		`{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final","text":"ok"} garbage`,
+		`{"protocol_version":"v0.1","invocation_id":"wrong","kind":"final_response","text":"ok"}`,
+		`{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final_response","text":"ok","text":"dup"}`,
+		`{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final_response","text":"ok","extra":"bad"}`,
+		`{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final_response"}`,
+		`{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final_response","text":"ok"} garbage`,
 		strings.Repeat(" ", 8200),
 	}
 	for i, body := range cases {

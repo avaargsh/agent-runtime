@@ -1,0 +1,28 @@
+name: runtime-recovery-contract
+
+on:
+  pull_request:
+    paths:
+      - "go.mod"
+      - "internal/recovery/**"
+      - ".github/workflows/runtime-recovery-contract.yml"
+  push:
+    branches: [main, feature/platform-foundation]
+    paths:
+      - "go.mod"
+      - "internal/recovery/**"
+      - ".github/workflows/runtime-recovery-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test Runtime recovery policy
+        run: go test ./...

@@ -1,5 +1,14 @@
 # Agent Runtime Tasks
 
+## Verified foundation inherited from the Runtime platform baseline
+
+- [x] Define Runtime ↔ Decision ↔ EngageGuard ownership and identifier semantics.
+- [x] Pin the canonical Agent Decision v0.1 protocol revision.
+- [x] Specify per-Activity retry and UNKNOWN handling rules.
+- [x] Add fail-closed Guard status/retry decision unit tests (pure Go; no provider I/O).
+
+# Agent Runtime Tasks
+
 ## Verified baseline
 
 - [x] Initial Go Temporal Decision Activity / Workflow / Worker / Starter spike passes GitHub Actions Run [41435829765](https://github.com/avaargsh/agent-runtime/actions/runs/41435829765) on commit `a9a6b50748948db407f3dcff4306ccd476eb9cd3`.

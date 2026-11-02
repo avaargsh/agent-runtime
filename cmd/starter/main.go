@@ -30,8 +30,12 @@ func main() {
 		TurnID:          "demo-turn-1",
 		UserInput:       "hello",
 	}
+	workflowID, err := workflows.WorkflowID(turn.RunID)
+	if err != nil {
+		log.Fatal(err)
+	}
 	we, err := c.ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
-		ID: "agent-run/" + turn.RunID, TaskQueue: workflows.Queue,
+		ID: workflowID, TaskQueue: workflows.Queue,
 	}, workflows.Run, turn)
 	if err != nil {
 		log.Fatal(err)
