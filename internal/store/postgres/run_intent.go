@@ -103,7 +103,7 @@ func (s *Store) LookupIntent(ctx context.Context, tenantID, intentID, digest str
 		return run.IntentReceipt{}, run.ErrRepositoryUnavailable
 	}
 	if err := (run.IntentStartRequest{TenantID: tenantID, RunIntentID: intentID,
-		RequestDigest: digest, AgentID: "lookup", AgentReleaseID: "lookup", SessionID: "lookup"}).Validate(); err != nil {
+		RequestDigest: digest}).ValidateLookup(); err != nil {
 		return run.IntentReceipt{}, err
 	}
 	return lookupIntentRow(ctx, s.pool, tenantID, intentID, digest)

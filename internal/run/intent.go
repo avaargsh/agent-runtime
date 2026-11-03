@@ -35,18 +35,36 @@ type IntentReceipt struct {
 	Created       bool
 }
 
-func (r IntentStartRequest) Validate() error {
+// ValidateLookup validates the immutable correlation scope needed for a
+// read-only durable lookup. A lookup does not carry create-only Agent or input.
+func (r IntentStartRequest) ValidateLookup() error {
 	if _, err := uuid.Parse(r.RunIntentID); err != nil {
 		return ErrInvalidRequest
 	}
 	if !sha256Digest.MatchString(r.RequestDigest) {
 		return ErrInvalidRequest
 	}
-	for _, value := range []string{r.TenantID, r.AgentID, r.AgentReleaseID, r.SessionID} {
+	if r.TenantID == "" || strings.TrimSpace(r.TenantID) != r.TenantID ||
+		len(r.TenantID) > 255 || strings.ContainsAny(r.TenantID, "\x00\r\n\t") {
+		return ErrInvalidRequest
+	}
+	return nil
+}
+
+// Validate enforces the full create-only ACP request contract. Missing input
+// must never silently become an empty JSON object during Run acceptance.
+func (r IntentStartRequest) Validate() error {
+	if err := r.ValidateLookup(); err != nil {
+		return err
+	}
+	for _, value := range []string{r.AgentID, r.AgentReleaseID, r.SessionID} {
 		if value == "" || strings.TrimSpace(value) != value || len(value) > 255 ||
 			strings.ContainsAny(value, "\x00\r\n\t") {
 			return ErrInvalidRequest
 		}
+	}
+	if len(r.Input) == 0 {
+		return ErrInvalidRequest
 	}
 	if _, err := canonicalObject(r.Input); err != nil {
 		return ErrInvalidRequest
