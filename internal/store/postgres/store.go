@@ -77,6 +77,27 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 
+	// Migration v2 is additive and supports already-populated development DBs.
+	var v2Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 2)",
+	).Scan(&v2Applied); err != nil {
+		return fmt.Errorf("read ACP binding migration ledger: %w", err)
+	}
+	if !v2Applied {
+		script, err := migrationFiles.ReadFile("migrations/0002_acp_run_intent.up.sql")
+		if err != nil {
+			return fmt.Errorf("read ACP migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply ACP migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO runtime_schema_migrations (version) VALUES (2)",
+		); err != nil {
+			return fmt.Errorf("record ACP migration: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
