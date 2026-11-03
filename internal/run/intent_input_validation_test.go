@@ -28,3 +28,21 @@ func TestACPIntentCreationRejectsMissingInput(t *testing.T) {
 		}
 	}
 }
+
+func TestACPIntentLookupRequiresOnlyCorrelationIdentity(t *testing.T) {
+	request := run.IntentStartRequest{
+		TenantID: "tenant-1",
+		RunIntentID: "11111111-1111-4111-8111-111111111111",
+		RequestDigest: "sha256:" + strings.Repeat("a", 64),
+	}
+	if err := request.ValidateLookup(); err != nil {
+		t.Fatalf("read-only lookup unexpectedly requires creation input: %v", err)
+	}
+	if err := request.Validate(); !errors.Is(err, run.ErrInvalidRequest) {
+		t.Fatalf("lookup fields must not authorize Run creation: %v", err)
+	}
+	request.TenantID = " tenant-1"
+	if err := request.ValidateLookup(); !errors.Is(err, run.ErrInvalidRequest) {
+		t.Fatalf("malformed lookup tenant was accepted: %v", err)
+	}
+}
