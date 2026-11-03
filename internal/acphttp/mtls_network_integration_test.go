@@ -6,8 +6,8 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"log"
 	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -28,7 +28,7 @@ func TestRealNetworkMTLS(t *testing.T) {
 	now := time.Now()
 	caTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		NotBefore:    now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
 		IsCA: true, BasicConstraintsValid: true,
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 	}
@@ -60,10 +60,10 @@ func TestRealNetworkMTLS(t *testing.T) {
 		}
 		leaf := &x509.Certificate{
 			SerialNumber: big.NewInt(serial),
-			NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
-			KeyUsage: x509.KeyUsageDigitalSignature,
+			NotBefore:    now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+			KeyUsage:    x509.KeyUsageDigitalSignature,
 			ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-			URIs: uris,
+			URIs:        uris,
 		}
 		serial++
 		der, err := x509.CreateCertificate(rand.Reader, leaf, caCert, &key.PublicKey, caKey)
@@ -79,7 +79,7 @@ func TestRealNetworkMTLS(t *testing.T) {
 	srv.TLS = &tls.Config{
 		MinVersion: tls.VersionTLS13,
 		ClientAuth: tls.RequireAndVerifyClientCert,
-		ClientCAs: caPool,
+		ClientCAs:  caPool,
 	}
 	srv.StartTLS()
 	defer srv.Close()
@@ -90,8 +90,8 @@ func TestRealNetworkMTLS(t *testing.T) {
 			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					MinVersion: tls.VersionTLS13,
-					RootCAs: serverRoots,
+					MinVersion:   tls.VersionTLS13,
+					RootCAs:      serverRoots,
 					Certificates: certs,
 				},
 			},
