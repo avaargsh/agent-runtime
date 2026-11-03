@@ -172,9 +172,8 @@ func (h *handler) inspect(w http.ResponseWriter, r *http.Request) {
 	digest := queries.Get("request_digest")
 	command := run.IntentStartRequest{
 		TenantID: tenant, RunIntentID: id, RequestDigest: digest,
-		AgentID: "lookup", AgentReleaseID: "lookup", SessionID: "lookup",
 	}
-	if err := command.Validate(); err != nil {
+	if err := command.ValidateLookup(); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
