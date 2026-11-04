@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 )
 
 type fakeKeyProvider struct {
@@ -48,6 +49,7 @@ func cloneVaultRecord(in VaultRecord) VaultRecord {
 		KeyID:      in.KeyID,
 		Nonce:      bytes.Clone(in.Nonce),
 		Ciphertext: bytes.Clone(in.Ciphertext),
+		ExpiresAt:  in.ExpiresAt,
 	}
 }
 
@@ -87,7 +89,7 @@ func TestEncryptedVaultEncryptsAtRestAndSupportsKeyRotation(t *testing.T) {
 		},
 	}
 	store := newMemoryRecordStore()
-	vault, err := NewEncryptedVault(store, provider)
+	vault, err := NewEncryptedVault(store, provider, time.Hour)
 	if err != nil {
 		t.Fatalf("NewEncryptedVault() error = %v", err)
 	}
@@ -134,7 +136,7 @@ func TestEncryptedVaultBindsCiphertextToTenantRunTokenAndDataType(t *testing.T) 
 		},
 	}
 	store := newMemoryRecordStore()
-	vault, err := NewEncryptedVault(store, provider)
+	vault, err := NewEncryptedVault(store, provider, time.Hour)
 	if err != nil {
 		t.Fatalf("NewEncryptedVault() error = %v", err)
 	}
@@ -168,7 +170,7 @@ func TestEncryptedVaultRejectsDuplicateTokenAndNeverOverwrites(t *testing.T) {
 		keys: map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
 	}
 	store := newMemoryRecordStore()
-	vault, err := NewEncryptedVault(store, provider)
+	vault, err := NewEncryptedVault(store, provider, time.Hour)
 	if err != nil {
 		t.Fatalf("NewEncryptedVault() error = %v", err)
 	}
@@ -195,7 +197,7 @@ func TestEncryptedVaultFailsClosedOnUnknownKeyOrCorruptedCiphertext(t *testing.T
 		keys: map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
 	}
 	store := newMemoryRecordStore()
-	vault, err := NewEncryptedVault(store, provider)
+	vault, err := NewEncryptedVault(store, provider, time.Hour)
 	if err != nil {
 		t.Fatalf("NewEncryptedVault() error = %v", err)
 	}
@@ -215,5 +217,47 @@ func TestEncryptedVaultFailsClosedOnUnknownKeyOrCorruptedCiphertext(t *testing.T
 	store.records[vaultKey(scope, tokenID)] = record
 	if _, _, _, err := vault.Get(ctx, scope, tokenID); !errors.Is(err, ErrVaultAuthentication) {
 		t.Fatalf("Get() after ciphertext tampering error = %v, want ErrVaultAuthentication", err)
+	}
+}
+
+
+func TestEncryptedVaultRejectsExpiredTokens(t *testing.T) {
+	ctx := context.Background()
+	scope := Scope{TenantID: "tenant-1", RunID: "run-1"}
+	material := KeyMaterial{ID: "key-v1", Key: bytes.Repeat([]byte{6}, 32)}
+	provider := &fakeKeyProvider{
+		current: map[string]KeyMaterial{"tenant-1": material},
+		keys: map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
+	}
+	store := newMemoryRecordStore()
+	vault, err := NewEncryptedVault(store, provider, time.Minute)
+	if err != nil {
+		t.Fatalf("NewEncryptedVault() error = %v", err)
+	}
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	vault.now = func() time.Time { return now }
+	vault.random = bytes.NewReader(bytes.Repeat([]byte{2}, 32))
+	tokenID := "0123456789abcdef0123456789abcdef"
+	if err := vault.Put(ctx, scope, tokenID, DataTypeEmail, []byte("alice@example.com")); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	record := store.records[vaultKey(scope, tokenID)]
+	if !record.ExpiresAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("ExpiresAt = %s, want %s", record.ExpiresAt, now.Add(time.Minute))
+	}
+
+	now = now.Add(time.Minute)
+	if _, _, found, err := vault.Get(ctx, scope, tokenID); err != nil || found {
+		t.Fatalf("Get() after expiry = found %v, err %v; want unresolved", found, err)
+	}
+}
+
+func TestNewEncryptedVaultRequiresPositiveTTL(t *testing.T) {
+	store := newMemoryRecordStore()
+	provider := &fakeKeyProvider{}
+	for _, ttl := range []time.Duration{0, -time.Second} {
+		if vault, err := NewEncryptedVault(store, provider, ttl); err == nil || vault != nil {
+			t.Fatalf("NewEncryptedVault(ttl=%s) = %v, %v; want nil vault and error", ttl, vault, err)
+		}
 	}
 }
