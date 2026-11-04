@@ -54,6 +54,21 @@
 - [ ] Compare LiveKit / Telnyx / Cartesia / managed Temporal patterns against Runtime boundaries.
 - [ ] Identify reusable components and gaps; do not introduce a second workflow engine, operation journal or provider scheduler.
 
+
+## Gate F — Coding Agent Runtime Security Boundary (P0/P1, issue #10)
+
+- [x] Define Runtime / ACP / EngageGuard security ownership and canonical identity correlation in the Security Boundary RFC.
+- [ ] Propagate trusted SecurityContext through model, tool, subprocess and remote-egress boundaries; reject plugin-supplied identity.
+- [ ] Define versioned Runtime SecurityEvent schema and append-only PostgreSQL audit persistence; keep Outbox as delivery only.
+- [ ] Audit model request/response metadata, Proposal/tool lifecycle, policy decisions, file/shell/network observations, breaker and recovery events without storing plaintext secrets.
+- [ ] Add Run-scoped circuit breaker with monotonic epoch fencing, Temporal cancellation, process/sandbox termination and Guard revocation integration.
+- [ ] Add fail-closed enforcement when audit, policy, scanner, Vault or supervisor dependencies are unavailable.
+- [ ] Define OutboundProtector / InboundRestorer contracts and encrypted Token Vault adapter.
+- [ ] Implement scoped reversible PII tokenization; credentials/private keys/passwords use irreversible redaction or local Secret References.
+- [ ] Implement audience/purpose-bound rehydration and reject forged, expired, cross-tenant and cross-Run tokens.
+- [ ] Add streaming-boundary, retry, cancellation-race, audit/Vault outage and process-supervisor integration tests.
+- [ ] Pass exact-head Go race/vet/format and PostgreSQL / Runtime integration CI before promotion.
+
 ## Legacy migration track — separate repository
 
 - [ ] Audit `musuntana/cloud-agent-runtime` SQLite decoupling and storage contract.
