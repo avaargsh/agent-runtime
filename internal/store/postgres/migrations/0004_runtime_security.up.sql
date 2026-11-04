@@ -76,3 +76,24 @@ INSERT INTO runtime_circuit_breakers (
 SELECT 'RUN', run_id::text, 'CLOSED', 1, 1, updated_at
 FROM runs
 ON CONFLICT (scope_kind, scope_id) DO NOTHING;
+
+-- Every Run creation path receives a breaker in the same transaction,
+-- including writers running an older application version during rollout.
+CREATE OR REPLACE FUNCTION create_initial_run_breaker()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $run_breaker$
+BEGIN
+    INSERT INTO runtime_circuit_breakers (
+        scope_kind, scope_id, state, epoch, version, updated_at
+    )
+    VALUES ('RUN', NEW.run_id::text, 'CLOSED', 1, 1, NEW.created_at)
+    ON CONFLICT (scope_kind, scope_id) DO NOTHING;
+    RETURN NEW;
+END;
+$run_breaker$;
+
+CREATE TRIGGER runs_create_initial_breaker
+AFTER INSERT ON runs
+FOR EACH ROW EXECUTE FUNCTION create_initial_run_breaker();
+
