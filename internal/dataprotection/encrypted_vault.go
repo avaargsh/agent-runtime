@@ -60,10 +60,12 @@ type VaultRecordStore interface {
 // associated data. Key rotation is write-new/read-old: CurrentKey is used for
 // new records, while KeyByID resolves each stored key version.
 type EncryptedVault struct {
-	store   VaultRecordStore
-	keys    KeyProvider
-	random  io.Reader
+	store    VaultRecordStore
+	keys     KeyProvider
+	random   io.Reader
 	randomMu sync.Mutex
+	ttl      time.Duration
+	now      func() time.Time
 }
 
 func NewEncryptedVault(store VaultRecordStore, keys KeyProvider, ttl time.Duration) (*EncryptedVault, error) {
