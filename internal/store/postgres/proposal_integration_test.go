@@ -325,3 +325,70 @@ func TestAdvanceTurnOutboxFailureRollsBackRevisionAndSupersession(t *testing.T) 
 		t.Fatalf("failed Turn update left partial state: revision=%d proposal=%+v", revision, loaded)
 	}
 }
+
+func TestCreateProposalReplayReturnsSupersededCanonicalProposal(t *testing.T) {
+	h, proposal := newProposalStore(t, 11)
+	ctx := context.Background()
+
+	if err := h.store.CreateProposal(ctx, proposal); err != nil {
+		t.Fatalf("CreateProposal: %v", err)
+	}
+	if _, err := h.store.PrepareProposal(ctx, h.tenantID, proposal.ID, true); err != nil {
+		t.Fatalf("PrepareProposal: %v", err)
+	}
+	if err := h.store.AdvanceTurnIntent(ctx, h.tenantID, h.runID, h.turnID, 11, 12, true); err != nil {
+		t.Fatalf("AdvanceTurnIntent: %v", err)
+	}
+
+	// A create ACK may have been lost and retried after a later correction.
+	// The replay must resolve the original identity, not fail on the now-stale
+	// revision and not recreate or reset the Proposal.
+	if err := h.store.CreateProposal(ctx, proposal); err != nil {
+		t.Fatalf("idempotent replay of superseded Proposal: %v", err)
+	}
+	loaded, err := h.store.GetProposal(ctx, h.tenantID, proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State != executionsafety.ProposalSuperseded || loaded.Version != 3 {
+		t.Fatalf("Proposal replay rewrote canonical lifecycle: %+v", loaded)
+	}
+	var proposalEvents int
+	if err := h.pool.QueryRow(ctx, `
+		SELECT count(*) FROM runtime_execution_outbox
+		WHERE tenant_id=$1 AND proposal_id=$2
+	`, h.tenantID, proposal.ID).Scan(&proposalEvents); err != nil {
+		t.Fatal(err)
+	}
+	if proposalEvents != 3 {
+		t.Fatalf("idempotent create replay appended a duplicate event: count=%d want=3", proposalEvents)
+	}
+}
+
+func TestCreateProposalSameIdentityWithChangedDigestConflicts(t *testing.T) {
+	h, proposal := newProposalStore(t, 11)
+	ctx := context.Background()
+	if err := h.store.CreateProposal(ctx, proposal); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := executionsafety.NewProposal(executionsafety.ProposalInput{
+		ID: proposal.ID, TenantID: proposal.TenantID, RunID: proposal.RunID, TurnID: proposal.TurnID,
+		IntentRevision: proposal.IntentRevision, ArgumentsDigest: proposal.ArgumentsDigest,
+		ActionRequestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		ToolPolicy: proposal.ToolPolicy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.CreateProposal(ctx, changed); err == nil {
+		t.Fatal("same Proposal identity accepted a changed ActionRequest digest")
+	}
+	loaded, err := h.store.GetProposal(ctx, h.tenantID, proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ActionRequestDigest != proposal.ActionRequestDigest {
+		t.Fatalf("changed digest replaced canonical Proposal: %+v", loaded)
+	}
+}
