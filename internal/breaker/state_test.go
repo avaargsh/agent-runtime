@@ -121,7 +121,7 @@ func TestNewClosedRejectsInvalidScopeAndTime(t *testing.T) {
 		{Kind: ScopeTenant, ID: " tenant-001"},
 	} {
 		if got, err := NewClosed(scope, testTime()); err == nil || got.State != "" {
-			t.Fatalf("NewClosed(%+v) = %+v, %v; want rejection", got, err)
+			t.Fatalf("NewClosed(%+v) = %+v, %v; want rejection", scope, got, err)
 		}
 	}
 	if got, err := NewClosed(runScope(), time.Time{}); err == nil || got.State != "" {
