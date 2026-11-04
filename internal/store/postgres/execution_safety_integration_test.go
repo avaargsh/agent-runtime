@@ -371,7 +371,8 @@ func TestConcurrentIntentAdvanceAndProposalCommitHasOneSafeOutcome(t *testing.T)
 		}
 		if errors.Is(err, executionsafety.ErrCommitNotAuthorized) ||
 			errors.Is(err, executionsafety.ErrStaleIntent) ||
-			errors.Is(err, executionsafety.ErrInvalidTransition) {
+			errors.Is(err, executionsafety.ErrInvalidTransition) ||
+			errors.Is(err, executionsafety.ErrVersionConflict) {
 			commitErr = err
 		} else {
 			correctionErr = err
