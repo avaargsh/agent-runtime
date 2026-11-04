@@ -297,3 +297,41 @@ func TestProtectOutboundScannerFailureReturnsNoOriginalPayload(t *testing.T) {
 		t.Fatalf("scanner failure returned original payload: %q", got)
 	}
 }
+
+func TestProtectOutboundDeniesRestrictedClassification(t *testing.T) {
+	payload := "confidential contract text"
+	engine := newTestEngine(t, fakeDetector{
+		spans: []Span{spanFor(t, payload, payload, DataTypeRestricted)},
+	}, newFakeVault(), fakeRehydrationAuthorizer{})
+
+	got, err := engine.ProtectOutbound(
+		context.Background(),
+		Scope{TenantID: "tenant-1", RunID: "run-1"},
+		"model-provider",
+		[]byte(payload),
+	)
+	if !errors.Is(err, ErrEgressDenied) {
+		t.Fatalf("ProtectOutbound() error = %v, want ErrEgressDenied", err)
+	}
+	if got != nil {
+		t.Fatalf("restricted payload escaped scanner: %q", got)
+	}
+}
+
+func TestRestoreInboundPreservesMalformedTokenMarkers(t *testing.T) {
+	engine := newTestEngine(t, fakeDetector{}, newFakeVault(), fakeRehydrationAuthorizer{})
+	input := []byte("before [[AGENT_TOKEN:not-a-token]] after")
+	got, err := engine.RestoreInbound(
+		context.Background(),
+		Scope{TenantID: "tenant-1", RunID: "run-1"},
+		"user-ui",
+		"display",
+		input,
+	)
+	if err != nil {
+		t.Fatalf("RestoreInbound() error = %v", err)
+	}
+	if !bytes.Equal(got, input) {
+		t.Fatalf("malformed token marker changed: got %q, want %q", got, input)
+	}
+}
