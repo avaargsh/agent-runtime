@@ -384,4 +384,3 @@ func TestRunInsertTriggerCreatesClosedBreakerForDirectSQLWriter(t *testing.T) {
 		t.Fatalf("trigger-created breaker = %s/%d/%d, want CLOSED/1/1", state, epoch, version)
 	}
 }
-
