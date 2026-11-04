@@ -195,7 +195,7 @@ func TestCircuitBreakerPostgresTenantAndAgentScopesAreIndependent(t *testing.T) 
 }
 
 func TestTransitionBreakerWithAuditIsAtomicAndIdempotent(t *testing.T) {
-	_, store := newTestStore(t)
+	pool, store := newTestStore(t)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 4, 15, 0, 0, 0, time.UTC)
 	scope := breaker.Scope{Kind: breaker.ScopeRun, ID: "run-security-1"}
@@ -236,7 +236,10 @@ func TestTransitionBreakerWithAuditIsAtomicAndIdempotent(t *testing.T) {
 		t.Fatalf("persisted breaker = %+v, want %+v", persisted, opened)
 	}
 	var count int
-	if err := store.poolQueryCountForTest(ctx, event.Identity.TenantID(), event.EventID, &count); err != nil {
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM runtime_security_audit_events
+		WHERE tenant_id=$1 AND event_id=$2
+	`, event.Identity.TenantID(), event.EventID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
@@ -329,11 +332,4 @@ func TestCompareAndSwapBreakerRejectsInvalidStateTransition(t *testing.T) {
 	if err := store.CompareAndSwapBreaker(ctx, initial.Version, fabricated); !errors.Is(err, postgres.ErrBreakerVersionConflict) {
 		t.Fatalf("same-state CAS error = %v, want ErrBreakerVersionConflict", err)
 	}
-}
-
-func (s *Store) poolQueryCountForTest(ctx context.Context, tenantID, eventID string, count *int) error {
-	return s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM runtime_security_audit_events
-		WHERE tenant_id=$1 AND event_id=$2
-	`, tenantID, eventID).Scan(count)
 }
