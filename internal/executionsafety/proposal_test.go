@@ -144,7 +144,7 @@ func TestCommitRequiresAllRuntimeAdmissionConditions(t *testing.T) {
 		},
 		{
 			name:       "confirmation missing",
-			conditions: CommitConditions{CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: true, RuntimeAdmissionAllowed: true, Confirmation: nil, GuardSubmissionKey: "guard-key-1"},
+			conditions: CommitConditions{CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: true, RuntimeAdmissionAllowed: true, Confirmation: nil, GuardSubmissionKey: "guard-key-1", ActionRequestDigest: testDigest},
 		},
 	}
 	for _, tc := range cases {
