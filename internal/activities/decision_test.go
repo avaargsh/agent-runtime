@@ -219,12 +219,14 @@ type stopAwareBreakerStore struct {
 
 func (s *stopAwareBreakerStore) GetRunBreaker(ctx context.Context, tenantID, runID string) (breaker.Record, error) {
 	s.calls++
-	if s.calls == 1 {
-		return s.record, nil
+	if s.calls == 2 {
+		// Model the in-flight poll whose context is canceled on successful
+		// completion. A later postflight read must remain usable.
+		close(s.pollStarted)
+		<-ctx.Done()
+		return breaker.Record{}, ctx.Err()
 	}
-	close(s.pollStarted)
-	<-ctx.Done()
-	return breaker.Record{}, ctx.Err()
+	return s.record, nil
 }
 
 type waitForPollInvoker struct {
