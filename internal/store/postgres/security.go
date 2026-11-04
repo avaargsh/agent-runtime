@@ -412,3 +412,23 @@ func (s *Store) auditEventMatches(ctx context.Context, event audit.Event) (bool,
 }
 
 var _ audit.Recorder = (*Store)(nil)
+
+// insertInitialRunBreaker creates the initial fencing generation in the same
+// transaction as Run acceptance. A conflicting row for a newly allocated Run
+// ID is treated as an integrity conflict rather than silently overwritten.
+func insertInitialRunBreaker(ctx context.Context, tx pgx.Tx, runID string, createdAt time.Time) error {
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO runtime_circuit_breakers (
+			scope_kind, scope_id, state, epoch, version, updated_at
+		)
+		VALUES ('RUN', $1, 'CLOSED', 1, 1, $2)
+		ON CONFLICT (scope_kind, scope_id) DO NOTHING
+	`, runID, createdAt.UTC())
+	if err != nil {
+		return fmt.Errorf("create initial Run circuit breaker: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrBreakerVersionConflict
+	}
+	return nil
+}
