@@ -103,6 +103,17 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 	if ctx.Err() != nil {
 		return empty, ctx.Err()
 	}
+	// A fast Decision response can complete before the periodic watcher makes
+	// its first query. Recheck the durable breaker/epoch after the response
+	// before accepting it or exposing a potentially retryable plugin error.
+	// The outer context remains live; the watcher context has been canceled.
+	postflight, err := a.Breakers.GetRunBreaker(ctx, turn.TenantID, turn.RunID)
+	if err != nil {
+		return empty, nonRetryableBreakerError(fmt.Errorf("load Run breaker after Decision egress: %w", err))
+	}
+	if err := postflight.Check(expectedEpoch, breaker.EffectReadOnly); err != nil {
+		return empty, nonRetryableBreakerError(err)
+	}
 	if invokeErr != nil {
 		return empty, invokeErr
 	}
