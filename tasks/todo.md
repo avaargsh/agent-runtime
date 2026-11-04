@@ -1,54 +1,61 @@
 # Agent Runtime Tasks
 
-## Verified foundation inherited from the Runtime platform baseline
+## Verified architecture foundation
 
 - [x] Define Runtime ↔ Decision ↔ EngageGuard ownership and identifier semantics.
 - [x] Pin the canonical Agent Decision v0.1 protocol revision.
 - [x] Specify per-Activity retry and UNKNOWN handling rules.
 - [x] Add fail-closed Guard status/retry decision unit tests (pure Go; no provider I/O).
-
-# Agent Runtime Tasks
-
-## Verified baseline
-
-- [x] Initial Go Temporal Decision Activity / Workflow / Worker / Starter spike passes GitHub Actions Run [41435829765](https://github.com/avaargsh/agent-runtime/actions/runs/41435829765) on commit `a9a6b50748948db407f3dcff4306ccd476eb9cd3`.
-- [ ] Real Temporal Server execution, replay and Worker restart are still unverified.
-- [ ] PostgreSQL, Run idempotency, Event Inbox/Outbox and Guard UNKNOWN recovery are not implemented in the inspected PR #2 tree.
+- [x] Add PostgreSQL-backed RunStore and idempotent Runtime RunIntent acceptance (stacked implementation; real deployment acceptance remains separate).
+- [x] Add internal mTLS-verified ACP RunIntent accept / inspect boundary (network deployment and authenticated ACP producer acceptance remain separate).
 
 ## Gate A — Durable Run and events (P0)
 
-- [ ] Add PostgreSQL-backed canonical Run / Task / Attempt metadata and idempotent StartRun.
-- [ ] Enforce stable Workflow ID derived from canonical Run ID and reject idempotency-key/request-digest conflicts.
-- [ ] Add transactional Event Inbox + Outbox; ACK only after commit.
-- [ ] Enforce tenant/Run ownership, event ID deduplication and changed-payload conflict rejection.
-- [ ] Make Temporal Signal delivery idempotent by event ID across dispatcher restart.
-- [ ] Add PostgreSQL migration, concurrency and restart integration tests.
+- [x] Add PostgreSQL-backed Run metadata, stable RunIntent mapping and idempotent StartRun.
+- [x] Enforce stable Workflow ID derived from canonical Run ID and reject idempotency-key/request-digest conflicts.
+- [ ] Complete durable Outbox delivery to Temporal and Event Inbox deduplication / ordering / gap recovery.
+- [ ] Add real PostgreSQL + Temporal restart and lost-ACK integration tests on the complete end-to-end path.
 
 ## Gate B — Durable Temporal execution (P0)
 
-- [ ] Add real Temporal Server integration tests.
-- [ ] Verify Worker stop/start and Workflow history replay.
+- [ ] Verify real Temporal Server execution, Workflow replay and Worker stop/start recovery.
 - [ ] Verify Activity retry against stable invocation identity and bounded deadlines.
-- [ ] Add cancellation propagation and terminal Run behavior.
+- [ ] Add cancellation propagation and terminal Run behavior backed by owning-operation outcomes.
 
 ## Gate C — Guarded side effects (P0)
 
-- [ ] Add a versioned Runtime-to-EngageGuard client/Activity.
-- [ ] Bind operation_id, action_hash, attempt_id and receipt_id to the originating Run/Task.
+- [ ] Ratify the actual EngageGuard request / receipt / idempotency contract against the deployed service.
+- [ ] Add a versioned Runtime-to-EngageGuard client / Activity.
+- [ ] Bind Guard operation_id, action_hash, executor attempt_id and receipt_id to the originating Run / Task / Proposal.
 - [ ] Validate receipt identity, schema and status before updating Runtime projections.
 - [ ] Treat UNKNOWN / RECONCILING / MANUAL_REVIEW as fail-closed; never create a new operation for blind retry.
-- [ ] Add lost-ACK, process-crash and reconciliation integration tests.
+- [ ] Add lost-ACK, process-crash and authoritative reconciliation integration tests.
 
-## Gate D — Cross-plane Golden Path (P1)
+## Gate D — Agent Execution Safety Commit Protocol (P0)
 
-- [ ] Add Runtime Adapter SPI and Worker registration/heartbeat/capability discovery.
+- [x] Define Proposal / Prepare / Runtime Commit Boundary / Guard execution ownership in the Agent Execution Safety RFC.
+- [x] Add a pure-Go Runtime Proposal state model with stale-revision, admission, confirmation and idempotency checks.
+- [x] Add Alice admin-to-read-only correction Golden Path with a Guard test double and Evidence assertions.
+- [ ] Persist Proposal state, immutable ActionRequest digest, stable Guard submission key and commit Evidence atomically in Runtime PostgreSQL.
+- [ ] Wire Proposal / Prepare / Commit / recovery into deterministic Temporal Workflow + Activities.
+- [ ] Run exact-head unit/race/vet CI and then real PostgreSQL / Temporal / EngageGuard fault-injection acceptance.
+
+## Gate E — Cross-plane Golden Path (P1)
+
+- [ ] Add Runtime Adapter SPI and Worker registration / heartbeat / capability discovery.
 - [ ] Add Session Runtime Binding that survives Worker restart and migration.
-- [ ] Bind Compute Allocation by reference; do not own Provider/Allocation lifecycle.
-- [ ] Persist execution result and Evidence references.
+- [ ] Bind Compute Allocation by reference; do not own Provider / Allocation lifecycle.
+- [ ] Persist execution result and Evidence references; project versioned events to ACP.
 - [ ] Verify cancellation, resource release observation and recovery.
+- [ ] Add Voice Agent architecture map and production failure taxonomy as Runtime adapter / observability inputs.
+
+## P2 — Ecosystem capability analysis
+
+- [ ] Compare LiveKit / Telnyx / Cartesia / managed Temporal patterns against Runtime boundaries.
+- [ ] Identify reusable components and gaps; do not introduce a second workflow engine, operation journal or provider scheduler.
 
 ## Legacy migration track — separate repository
 
 - [ ] Audit `musuntana/cloud-agent-runtime` SQLite decoupling and storage contract.
 - [ ] Verify legacy ProviderOperationJournal adapter semantics before migration or reuse.
-- [ ] Keep SQLite out of this Go repository; use PostgreSQL/pgx as the target persistence backend.
+- [ ] Keep SQLite out of this Go repository; use PostgreSQL / pgx as the target persistence backend.
