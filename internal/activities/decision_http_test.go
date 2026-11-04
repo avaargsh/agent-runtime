@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/avaargsh/agent-runtime/internal/breaker"
-	"github.com/avaargsh/agent-runtime/internal/decision"
 	"github.com/avaargsh/agent-runtime/internal/dataprotection"
+	"github.com/avaargsh/agent-runtime/internal/decision"
 	"github.com/avaargsh/agent-runtime/internal/workflows"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -86,9 +86,9 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 	store := &requestGatedBreakerStore{closed: closed, opened: opened, requestReached: requestReached}
 	activity := &Activities{
 		Client: decision.Client{
-			Endpoint: server.URL,
+			Endpoint:  server.URL,
 			Protector: testDecisionProtector{},
-			HTTP:     &http.Client{Timeout: 5 * time.Second, Transport: server.Client().Transport},
+			HTTP:      &http.Client{Timeout: 5 * time.Second, Transport: server.Client().Transport},
 		},
 		Breakers:     store,
 		Runs:         testRunIdentityReader(),
