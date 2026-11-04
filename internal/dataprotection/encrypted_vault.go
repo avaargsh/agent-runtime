@@ -13,6 +13,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -44,6 +45,7 @@ type VaultRecord struct {
 	KeyID      string
 	Nonce      []byte
 	Ciphertext []byte
+	ExpiresAt  time.Time
 }
 
 // VaultRecordStore is a persistence boundary. Create MUST be atomic
@@ -64,11 +66,20 @@ type EncryptedVault struct {
 	randomMu sync.Mutex
 }
 
-func NewEncryptedVault(store VaultRecordStore, keys KeyProvider) (*EncryptedVault, error) {
+func NewEncryptedVault(store VaultRecordStore, keys KeyProvider, ttl time.Duration) (*EncryptedVault, error) {
 	if store == nil || keys == nil {
 		return nil, ErrMissingDependency
 	}
-	return &EncryptedVault{store: store, keys: keys, random: rand.Reader}, nil
+	if ttl <= 0 {
+		return nil, fmt.Errorf("%w: Token Vault TTL must be positive", ErrInvalidVaultEntry)
+	}
+	return &EncryptedVault{
+		store: store,
+		keys: keys,
+		random: rand.Reader,
+		ttl: ttl,
+		now: time.Now,
+	}, nil
 }
 
 func (v *EncryptedVault) Put(
@@ -115,6 +126,7 @@ func (v *EncryptedVault) Put(
 		KeyID:      material.ID,
 		Nonce:      bytes.Clone(nonce),
 		Ciphertext: bytes.Clone(ciphertext),
+		ExpiresAt:  v.now().UTC().Add(v.ttl),
 	}
 	if err := v.store.Create(ctx, scope, tokenID, record); err != nil {
 		return fmt.Errorf("persist encrypted Vault record: %w", err)
@@ -136,6 +148,9 @@ func (v *EncryptedVault) Get(
 		return "", nil, false, fmt.Errorf("load encrypted Vault record: %w", err)
 	}
 	if !found {
+		return "", nil, false, nil
+	}
+	if record.ExpiresAt.IsZero() || !v.now().Before(record.ExpiresAt) {
 		return "", nil, false, nil
 	}
 	if !reversibleType(record.DataType) || len(record.Ciphertext) == 0 {
@@ -172,7 +187,7 @@ func (v *EncryptedVault) Get(
 }
 
 func (v *EncryptedVault) validate(scope Scope, tokenID string) error {
-	if v == nil || v.store == nil || v.keys == nil || v.random == nil {
+	if v == nil || v.store == nil || v.keys == nil || v.random == nil || v.now == nil || v.ttl <= 0 {
 		return ErrMissingDependency
 	}
 	if err := validateOpaqueField("tenant_id", scope.TenantID, 255); err != nil {
