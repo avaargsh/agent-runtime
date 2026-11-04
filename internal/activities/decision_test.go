@@ -13,12 +13,12 @@ import (
 
 type fakeBreakerStore struct {
 	mu       sync.Mutex
-	records    []breaker.Record
-	err        error
-	calls      int
-	onLookup   func(int)
-	tenantID   string
-	runID      string
+	records  []breaker.Record
+	err      error
+	calls    int
+	onLookup func(int)
+	tenantID string
+	runID    string
 }
 
 func (s *fakeBreakerStore) GetRunBreaker(_ context.Context, tenantID, runID string) (breaker.Record, error) {
@@ -68,7 +68,6 @@ func (f *fakeDecisionInvoker) Invoke(ctx context.Context, turn decision.Turn) (d
 	<-ctx.Done()
 	return decision.Result{}, ctx.Err()
 }
-
 
 type immediateDecisionInvoker struct {
 	calls int
@@ -195,7 +194,6 @@ func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 	}
 }
 
-
 func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
@@ -262,4 +260,3 @@ func TestInvokeDecisionIgnoresWatcherQueryCancelledByNormalCompletion(t *testing
 		t.Fatalf("result text = %q", result.Text)
 	}
 }
-
