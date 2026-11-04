@@ -34,16 +34,16 @@ var (
 type DataType string
 
 const (
-	DataTypePerson       DataType = "PERSON"
-	DataTypeEmail        DataType = "EMAIL"
-	DataTypePhone        DataType = "PHONE"
-	DataTypeCustomerID   DataType = "CUSTOMER_ID"
-	DataTypePassword     DataType = "PASSWORD"
-	DataTypeAPIKey       DataType = "API_KEY"
-	DataTypeBearerToken  DataType = "BEARER_TOKEN"
-	DataTypePrivateKey   DataType = "PRIVATE_KEY"
+	DataTypePerson        DataType = "PERSON"
+	DataTypeEmail         DataType = "EMAIL"
+	DataTypePhone         DataType = "PHONE"
+	DataTypeCustomerID    DataType = "CUSTOMER_ID"
+	DataTypePassword      DataType = "PASSWORD"
+	DataTypeAPIKey        DataType = "API_KEY"
+	DataTypeBearerToken   DataType = "BEARER_TOKEN"
+	DataTypePrivateKey    DataType = "PRIVATE_KEY"
 	DataTypeSessionCookie DataType = "SESSION_COOKIE"
-	DataTypeRestricted   DataType = "RESTRICTED"
+	DataTypeRestricted    DataType = "RESTRICTED"
 )
 
 // Scope is constructed from a trusted Runtime SecurityContext. It must never
