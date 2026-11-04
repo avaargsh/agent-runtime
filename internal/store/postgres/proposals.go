@@ -13,10 +13,10 @@ import (
 )
 
 var (
-	ErrTurnIntentNotFound      = errors.New("TurnIntent not found")
-	ErrTurnRevisionConflict    = errors.New("TurnIntent revision conflict")
-	ErrProposalNotFound        = errors.New("Tool Proposal not found")
-	ErrProposalVersionConflict = errors.New("Tool Proposal version conflict")
+	ErrTurnIntentNotFound       = errors.New("TurnIntent not found")
+	ErrTurnRevisionConflict     = errors.New("TurnIntent revision conflict")
+	ErrProposalNotFound         = errors.New("Tool Proposal not found")
+	ErrProposalVersionConflict  = errors.New("Tool Proposal version conflict")
 	ErrProposalIdentityConflict = errors.New("Tool Proposal identity reused with different immutable content")
 )
 

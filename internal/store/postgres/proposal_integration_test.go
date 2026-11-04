@@ -376,7 +376,7 @@ func TestCreateProposalSameIdentityWithChangedDigestConflicts(t *testing.T) {
 		ID: proposal.ID, TenantID: proposal.TenantID, RunID: proposal.RunID, TurnID: proposal.TurnID,
 		IntentRevision: proposal.IntentRevision, ArgumentsDigest: proposal.ArgumentsDigest,
 		ActionRequestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		ToolPolicy: proposal.ToolPolicy,
+		ToolPolicy:          proposal.ToolPolicy,
 	})
 	if err != nil {
 		t.Fatal(err)
