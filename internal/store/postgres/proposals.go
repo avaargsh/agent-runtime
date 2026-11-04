@@ -17,6 +17,7 @@ var (
 	ErrTurnRevisionConflict    = errors.New("TurnIntent revision conflict")
 	ErrProposalNotFound        = errors.New("Tool Proposal not found")
 	ErrProposalVersionConflict = errors.New("Tool Proposal version conflict")
+	ErrProposalIdentityConflict = errors.New("Tool Proposal identity reused with different immutable content")
 )
 
 // TurnIntent is a Runtime-owned snapshot of the current interaction intent.
@@ -203,13 +204,31 @@ func (s *Store) CreateProposal(ctx context.Context, proposal executionsafety.Pro
 		return fmt.Errorf("begin Proposal creation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// TurnIntent is always the first write lock. A replay must be resolved
+	// before comparing against the latest revision: the original Proposal may
+	// already have been prepared, superseded or committed after its ACK was lost.
 	intent, err := loadTurnIntent(ctx, tx, validated.TenantID, validated.RunID, validated.TurnID, true)
 	if err != nil {
+		return err
+	}
+	existing, err := loadProposal(ctx, tx, validated.TenantID, validated.ID, true)
+	if err == nil {
+		if !sameProposalIdentity(existing, validated) {
+			return ErrProposalIdentityConflict
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit idempotent Proposal create replay: %w", err)
+		}
+		return nil
+	}
+	if !errors.Is(err, ErrProposalNotFound) {
 		return err
 	}
 	if intent.Revision != validated.IntentRevision {
 		return executionsafety.ErrStaleIntent
 	}
+
 	now := time.Now().UTC()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO runtime_proposals (
@@ -232,6 +251,17 @@ func (s *Store) CreateProposal(ctx context.Context, proposal executionsafety.Pro
 		return fmt.Errorf("commit Tool Proposal creation: %w", err)
 	}
 	return nil
+}
+
+func sameProposalIdentity(existing, candidate executionsafety.Proposal) bool {
+	return existing.TenantID == candidate.TenantID &&
+		existing.ID == candidate.ID &&
+		existing.RunID == candidate.RunID &&
+		existing.TurnID == candidate.TurnID &&
+		existing.IntentRevision == candidate.IntentRevision &&
+		existing.ArgumentsDigest == candidate.ArgumentsDigest &&
+		existing.ActionRequestDigest == candidate.ActionRequestDigest &&
+		existing.ToolPolicy == candidate.ToolPolicy
 }
 
 // PrepareProposal runs side-effect-free Runtime admission against the current

@@ -381,8 +381,8 @@ func TestCreateProposalSameIdentityWithChangedDigestConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.CreateProposal(ctx, changed); err == nil {
-		t.Fatal("same Proposal identity accepted a changed ActionRequest digest")
+	if err := h.store.CreateProposal(ctx, changed); !errors.Is(err, postgres.ErrProposalIdentityConflict) {
+		t.Fatalf("same Proposal identity with changed digest must conflict, got %v", err)
 	}
 	loaded, err := h.store.GetProposal(ctx, h.tenantID, proposal.ID)
 	if err != nil {
