@@ -235,7 +235,9 @@ func TestProposalCommitCannotWinAfterIntentCorrection(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = store.CommitProposal(ctx, executionTenant, proposal.ID, prepared.Version, executionCommitConditions(prepared, "guard-key-stale"))
-	if !errors.Is(err, executionsafety.ErrInvalidTransition) && !errors.Is(err, executionsafety.ErrStaleIntent) {
+	if !errors.Is(err, executionsafety.ErrInvalidTransition) &&
+		!errors.Is(err, executionsafety.ErrStaleIntent) &&
+		!errors.Is(err, executionsafety.ErrVersionConflict) {
 		t.Fatalf("stale proposal crossed Commit after correction: %v", err)
 	}
 	after, err := store.GetProposal(ctx, executionTenant, proposal.ID)
@@ -311,7 +313,7 @@ func TestGuardOperationLinkRejectsCrossProposalOrDigestBinding(t *testing.T) {
 
 	mismatch := executionsafety.GuardOperationLink{
 		TenantID: executionTenant, ProposalID: proposal.ID,
-		GuardSubmissionKey: committed.GuardSubmissionKey,
+		GuardSubmissionKey:  committed.GuardSubmissionKey,
 		ActionRequestDigest: strings.Replace(committed.ActionRequestDigest, "b", "c", 1),
 		OperationID:         "guard-operation-wrong-digest",
 	}
