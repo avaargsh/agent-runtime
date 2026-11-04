@@ -169,12 +169,13 @@ The Guard operation has its own independent state machine. Runtime may expose a 
 For each admitted proposal:
 
 1. Runtime computes the canonical ActionRequest and immutable request digest.
-2. Runtime allocates a unique `guard_submission_key` and persists it with the digest, Proposal, Turn revision, policy snapshot and commit evidence.
-3. Runtime submits the same logical ActionRequest to EngageGuard using that key as the HTTP `Idempotency-Key`.
-4. EngageGuard creates and returns its own `operation_id`.
-5. Runtime persists the returned operation reference. A lost ACK is recovered by resubmitting the same key and identical request or querying the same authoritative operation; no new key is generated.
-6. The same key with a different request or binding is a conflict.
-7. After Guard reports `UNKNOWN` / `RECONCILING` / `MANUAL_REVIEW`, Runtime only queries/waits for authoritative resolution. It does not independently dispatch or retry a provider side effect.
+2. Runtime binds that digest to the Proposal; the Commit command must present the same digest, and a mismatch is rejected.
+3. Runtime allocates a unique `guard_submission_key` and persists it with the digest, Proposal, Turn revision, policy snapshot and commit evidence.
+4. Runtime submits the same logical ActionRequest to EngageGuard using that key as the HTTP `Idempotency-Key`.
+5. EngageGuard creates and returns its own `operation_id`.
+6. The authenticated Guard adapter correlates the returned operation ID with the original tenant, Proposal, submission key and ActionRequest digest before Runtime advances the Proposal. Runtime persists the returned operation reference. A lost ACK is recovered by resubmitting the same key and identical request or querying the same authoritative operation; no new key is generated.
+7. The same key with a different request or binding is a conflict.
+8. After Guard reports `UNKNOWN` / `RECONCILING` / `MANUAL_REVIEW`, Runtime only queries/waits for authoritative resolution. It does not independently dispatch or retry a provider side effect.
 
 The key is not derived from a Temporal Activity attempt counter, RunAttempt ID or wall-clock timestamp. Temporal retries reuse the same persisted key and immutable request. The capability enforcement point remains responsible for its own downstream idempotency and provider reconciliation.
 

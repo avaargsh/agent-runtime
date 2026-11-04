@@ -1,6 +1,8 @@
 package executionsafety
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"testing"
@@ -15,19 +17,19 @@ const (
 )
 
 type fakeGuardOperation struct {
-	id               string
-	submissionKey    string
-	requestDigest    string
-	proposalID       string
-	desiredRole      string
-	status           fakeGuardStatus
-	approvalRef      string
-	receiptRef       string
+	id            string
+	submissionKey string
+	requestDigest string
+	proposalID    string
+	desiredRole   string
+	status        fakeGuardStatus
+	approvalRef   string
+	receiptRef    string
 }
 
 type fakeGuard struct {
-	operations       map[string]*fakeGuardOperation
-	submissionCalls  int
+	operations        map[string]*fakeGuardOperation
+	submissionCalls   int
 	createdOperations int
 	executions        int
 	effectiveRoles    map[string]string
@@ -36,7 +38,7 @@ type fakeGuard struct {
 
 func newFakeGuard() *fakeGuard {
 	return &fakeGuard{
-		operations:    make(map[string]*fakeGuardOperation),
+		operations:     make(map[string]*fakeGuardOperation),
 		effectiveRoles: make(map[string]string),
 	}
 }
@@ -51,7 +53,7 @@ func (g *fakeGuard) Ensure(proposal Proposal, desiredRole string) (*fakeGuardOpe
 	if proposal.GuardSubmissionKey == "" {
 		return nil, fmt.Errorf("missing persisted Guard submission key")
 	}
-	requestDigest := proposal.ToolPolicy.PolicyDigest + ":" + proposal.ArgumentsDigest + ":" + desiredRole
+	requestDigest := proposal.ActionRequestDigest
 	if prior, ok := g.operations[proposal.GuardSubmissionKey]; ok {
 		if prior.requestDigest != requestDigest {
 			return nil, errors.New("IDEMPOTENCY_KEY_REUSED")
@@ -118,13 +120,14 @@ func newPermissionProposal(t *testing.T, id string, revision int64, desiredRole 
 	policy := testPolicy()
 	policy.CapabilityID = "iam.role.set." + desiredRole
 	proposal, err := NewProposal(ProposalInput{
-		ID:              id,
-		TenantID:        "tenant-acme",
-		RunID:           "run-permissions",
-		TurnID:          "turn-employee-access",
-		IntentRevision:  revision,
-		ArgumentsDigest: testDigest,
-		ToolPolicy:      policy,
+		ID:                  id,
+		TenantID:            "tenant-acme",
+		RunID:               "run-permissions",
+		TurnID:              "turn-employee-access",
+		IntentRevision:      revision,
+		ArgumentsDigest:     testDigest,
+		ActionRequestDigest: permissionRequestDigest(desiredRole),
+		ToolPolicy:          policy,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -170,6 +173,7 @@ func TestAlicePermissionCorrectionGoldenPath(t *testing.T) {
 		RuntimeAdmissionAllowed: true,
 		UserConfirmed:           true,
 		GuardSubmissionKey:      "gsk-alice-readonly-1",
+		ActionRequestDigest:     permissionRequestDigest("read_only"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +192,13 @@ func TestAlicePermissionCorrectionGoldenPath(t *testing.T) {
 	if op.id != replayOp.id || guard.createdOperations != 1 {
 		t.Fatalf("same key/digest did not resolve one operation: first=%+v replay=%+v created=%d", op, replayOp, guard.createdOperations)
 	}
-	readOnlyProposal, err = readOnlyProposal.MarkSubmittedToGuard(op.id)
+	readOnlyProposal, err = readOnlyProposal.MarkSubmittedToGuard(GuardOperationLink{
+		TenantID:            readOnlyProposal.TenantID,
+		ProposalID:          readOnlyProposal.ID,
+		GuardSubmissionKey:  op.submissionKey,
+		ActionRequestDigest: op.requestDigest,
+		OperationID:         op.id,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,8 +265,9 @@ func TestGuardSubmissionRejectsSameKeyWithChangedDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	committed, err := prepared.AuthorizeCommit(CommitConditions{
-		CurrentIntentRevision: 12, IntentComplete: true, CapabilityAllowed: true,
+		CurrentIntentRevision:   12, IntentComplete: true, CapabilityAllowed: true,
 		RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "gsk-one",
+		ActionRequestDigest:     permissionRequestDigest("read_only"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -264,9 +275,27 @@ func TestGuardSubmissionRejectsSameKeyWithChangedDigest(t *testing.T) {
 	if _, err := guard.Ensure(committed, "read_only"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := guard.Ensure(committed, "administrator"); err == nil {
-		t.Fatal("same Guard key accepted a changed request digest")
+	changedProposal := newPermissionProposal(t, "proposal-administrator", 12, "administrator")
+	changedPrepared, err := changedProposal.Prepare(12, true)
+	if err != nil {
+		t.Fatal(err)
 	}
+	changedCommitted, err := changedPrepared.AuthorizeCommit(CommitConditions{
+		CurrentIntentRevision:   12, IntentComplete: true, CapabilityAllowed: true,
+		RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "gsk-one",
+		ActionRequestDigest:     permissionRequestDigest("administrator"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := guard.Ensure(changedCommitted, "administrator"); err == nil {
+		t.Fatal("same Guard key accepted a changed ActionRequest digest")
+	}
+}
+
+func permissionRequestDigest(role string) string {
+	sum := sha256.Sum256([]byte("tenant=tenant-acme;subject=alice;role=" + role))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func contains(values []string, want string) bool {

@@ -8,20 +8,20 @@ import (
 )
 
 var (
-	ErrInvalidProposal       = errors.New("invalid proposal")
-	ErrInvalidTransition     = errors.New("invalid proposal transition")
-	ErrStaleIntent           = errors.New("proposal intent revision is stale")
-	ErrCommitNotAuthorized   = errors.New("commit conditions are not satisfied")
-	ErrCommitBoundaryCrossed = errors.New("proposal has crossed the commit boundary")
+	ErrInvalidProposal        = errors.New("invalid proposal")
+	ErrInvalidTransition      = errors.New("invalid proposal transition")
+	ErrStaleIntent            = errors.New("proposal intent revision is stale")
+	ErrCommitNotAuthorized    = errors.New("commit conditions are not satisfied")
+	ErrCommitBoundaryCrossed  = errors.New("proposal has crossed the commit boundary")
 	ErrIdempotencyKeyConflict = errors.New("guard submission key conflicts with prior commit")
 )
 
 type EffectClass string
 
 const (
-	EffectReadOnly           EffectClass = "READ_ONLY"
-	EffectReversibleWrite    EffectClass = "REVERSIBLE_WRITE"
-	EffectIrreversibleWrite  EffectClass = "IRREVERSIBLE_WRITE"
+	EffectReadOnly          EffectClass = "READ_ONLY"
+	EffectReversibleWrite   EffectClass = "REVERSIBLE_WRITE"
+	EffectIrreversibleWrite EffectClass = "IRREVERSIBLE_WRITE"
 )
 
 // ToolPolicy is resolved from trusted AgentBundle/capability metadata.
@@ -77,22 +77,23 @@ func (p ToolPolicy) Validate() error {
 type ProposalState string
 
 const (
-	ProposalProposed          ProposalState = "PROPOSED"
-	ProposalPrepared          ProposalState = "PREPARED"
-	ProposalSuperseded        ProposalState = "SUPERSEDED"
-	ProposalCancelled         ProposalState = "CANCELLED"
-	ProposalCommitAuthorized  ProposalState = "COMMIT_AUTHORIZED"
-	ProposalSubmittedToGuard  ProposalState = "SUBMITTED_TO_GUARD"
+	ProposalProposed         ProposalState = "PROPOSED"
+	ProposalPrepared         ProposalState = "PREPARED"
+	ProposalSuperseded       ProposalState = "SUPERSEDED"
+	ProposalCancelled        ProposalState = "CANCELLED"
+	ProposalCommitAuthorized ProposalState = "COMMIT_AUTHORIZED"
+	ProposalSubmittedToGuard ProposalState = "SUBMITTED_TO_GUARD"
 )
 
 type ProposalInput struct {
-	ID               string
-	TenantID         string
-	RunID            string
-	TurnID           string
-	IntentRevision   int64
-	ArgumentsDigest  string
-	ToolPolicy       ToolPolicy
+	ID                  string
+	TenantID            string
+	RunID               string
+	TurnID              string
+	IntentRevision      int64
+	ArgumentsDigest     string
+	ActionRequestDigest string
+	ToolPolicy          ToolPolicy
 }
 
 type Proposal struct {
@@ -102,6 +103,7 @@ type Proposal struct {
 	TurnID              string
 	IntentRevision      int64
 	ArgumentsDigest     string
+	ActionRequestDigest string
 	ToolPolicy          ToolPolicy
 	State               ProposalState
 	Version             int64
@@ -126,20 +128,24 @@ func NewProposal(input ProposalInput) (Proposal, error) {
 	if !validDigest(input.ArgumentsDigest) {
 		return Proposal{}, fmt.Errorf("%w: argumentsDigest must be sha256 hex", ErrInvalidProposal)
 	}
+	if !validDigest(input.ActionRequestDigest) {
+		return Proposal{}, fmt.Errorf("%w: actionRequestDigest must be sha256 hex", ErrInvalidProposal)
+	}
 	if err := input.ToolPolicy.Validate(); err != nil {
 		return Proposal{}, err
 	}
 
 	return Proposal{
-		ID:              input.ID,
-		TenantID:        input.TenantID,
-		RunID:           input.RunID,
-		TurnID:          input.TurnID,
-		IntentRevision:  input.IntentRevision,
-		ArgumentsDigest: input.ArgumentsDigest,
-		ToolPolicy:      input.ToolPolicy,
-		State:           ProposalProposed,
-		Version:         1,
+		ID:                  input.ID,
+		TenantID:            input.TenantID,
+		RunID:               input.RunID,
+		TurnID:              input.TurnID,
+		IntentRevision:      input.IntentRevision,
+		ArgumentsDigest:     input.ArgumentsDigest,
+		ActionRequestDigest: input.ActionRequestDigest,
+		ToolPolicy:          input.ToolPolicy,
+		State:               ProposalProposed,
+		Version:             1,
 	}, nil
 }
 
@@ -202,6 +208,7 @@ type CommitConditions struct {
 	RuntimeAdmissionAllowed bool
 	UserConfirmed           bool
 	GuardSubmissionKey      string
+	ActionRequestDigest     string
 }
 
 // AuthorizeCommit crosses the Runtime Commit Boundary. For approval-gated
@@ -209,7 +216,8 @@ type CommitConditions struct {
 // Guard approval, Permit and trusted execution remain independent.
 func (p Proposal) AuthorizeCommit(conditions CommitConditions) (Proposal, error) {
 	if p.State == ProposalCommitAuthorized || p.State == ProposalSubmittedToGuard {
-		if conditions.GuardSubmissionKey != p.GuardSubmissionKey {
+		if conditions.GuardSubmissionKey != p.GuardSubmissionKey ||
+			conditions.ActionRequestDigest != p.ActionRequestDigest {
 			return Proposal{}, ErrIdempotencyKeyConflict
 		}
 		return p, nil
@@ -229,6 +237,12 @@ func (p Proposal) AuthorizeCommit(conditions CommitConditions) (Proposal, error)
 	if err := validateIdentifier("guardSubmissionKey", conditions.GuardSubmissionKey); err != nil {
 		return Proposal{}, err
 	}
+	if !validDigest(conditions.ActionRequestDigest) {
+		return Proposal{}, fmt.Errorf("%w: actionRequestDigest must be sha256 hex", ErrInvalidProposal)
+	}
+	if conditions.ActionRequestDigest != p.ActionRequestDigest {
+		return Proposal{}, ErrIdempotencyKeyConflict
+	}
 
 	p.GuardSubmissionKey = conditions.GuardSubmissionKey
 	p.State = ProposalCommitAuthorized
@@ -236,11 +250,27 @@ func (p Proposal) AuthorizeCommit(conditions CommitConditions) (Proposal, error)
 	return p, nil
 }
 
-// MarkSubmittedToGuard stores an operation ID returned by EngageGuard. The
-// Runtime does not generate operation IDs or own the Guard operation journal.
-func (p Proposal) MarkSubmittedToGuard(guardOperationID string) (Proposal, error) {
+// GuardOperationLink is constructed by the authenticated Guard adapter after
+// validating the response. Correlation fields are copied from the exact request
+// sent to Guard; OperationID is returned by Guard and is never Runtime-generated.
+type GuardOperationLink struct {
+	TenantID            string
+	ProposalID          string
+	GuardSubmissionKey  string
+	ActionRequestDigest string
+	OperationID         string
+}
+
+// MarkSubmittedToGuard links the authoritative Guard operation to the exact
+// committed proposal. A response for another tenant, proposal, key or digest
+// cannot advance this Proposal.
+func (p Proposal) MarkSubmittedToGuard(link GuardOperationLink) (Proposal, error) {
 	if p.State == ProposalSubmittedToGuard {
-		if p.GuardOperationID != guardOperationID {
+		if link.OperationID != p.GuardOperationID ||
+			link.TenantID != p.TenantID ||
+			link.ProposalID != p.ID ||
+			link.GuardSubmissionKey != p.GuardSubmissionKey ||
+			link.ActionRequestDigest != p.ActionRequestDigest {
 			return Proposal{}, ErrIdempotencyKeyConflict
 		}
 		return p, nil
@@ -248,10 +278,16 @@ func (p Proposal) MarkSubmittedToGuard(guardOperationID string) (Proposal, error
 	if p.State != ProposalCommitAuthorized {
 		return Proposal{}, fmt.Errorf("%w: Guard submission from %s", ErrInvalidTransition, p.State)
 	}
-	if err := validateIdentifier("guardOperationID", guardOperationID); err != nil {
+	if err := validateIdentifier("guardOperationID", link.OperationID); err != nil {
 		return Proposal{}, err
 	}
-	p.GuardOperationID = guardOperationID
+	if link.TenantID != p.TenantID ||
+		link.ProposalID != p.ID ||
+		link.GuardSubmissionKey != p.GuardSubmissionKey ||
+		link.ActionRequestDigest != p.ActionRequestDigest {
+		return Proposal{}, ErrIdempotencyKeyConflict
+	}
+	p.GuardOperationID = link.OperationID
 	p.State = ProposalSubmittedToGuard
 	p.Version++
 	return p, nil

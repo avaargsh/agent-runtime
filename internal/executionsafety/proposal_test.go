@@ -24,13 +24,14 @@ func testPolicy() ToolPolicy {
 func testProposal(t *testing.T) Proposal {
 	t.Helper()
 	proposal, err := NewProposal(ProposalInput{
-		ID:              "proposal-1",
-		TenantID:        "tenant-1",
-		RunID:           "run-1",
-		TurnID:          "turn-1",
-		IntentRevision:  11,
-		ArgumentsDigest: testDigest,
-		ToolPolicy:      testPolicy(),
+		ID:                  "proposal-1",
+		TenantID:            "tenant-1",
+		RunID:               "run-1",
+		TurnID:              "turn-1",
+		IntentRevision:      11,
+		ArgumentsDigest:     testDigest,
+		ActionRequestDigest: testDigest,
+		ToolPolicy:          testPolicy(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,6 +99,7 @@ func TestSupersedeIsAllowedOnlyBeforeCommitBoundary(t *testing.T) {
 		RuntimeAdmissionAllowed: true,
 		UserConfirmed:           true,
 		GuardSubmissionKey:      "guard-key-1",
+		ActionRequestDigest: testDigest,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -113,27 +115,27 @@ func TestCommitRequiresAllRuntimeAdmissionConditions(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := []struct {
-		name string
+		name       string
 		conditions CommitConditions
 	}{
 		{
-			name: "incomplete intent",
+			name:       "incomplete intent",
 			conditions: CommitConditions{CurrentIntentRevision: 11, CapabilityAllowed: true, RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "guard-key-1"},
 		},
 		{
-			name: "stale revision",
+			name:       "stale revision",
 			conditions: CommitConditions{CurrentIntentRevision: 12, IntentComplete: true, CapabilityAllowed: true, RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "guard-key-1"},
 		},
 		{
-			name: "capability revoked",
+			name:       "capability revoked",
 			conditions: CommitConditions{CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: false, RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "guard-key-1"},
 		},
 		{
-			name: "runtime admission denied",
+			name:       "runtime admission denied",
 			conditions: CommitConditions{CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: true, RuntimeAdmissionAllowed: false, UserConfirmed: true, GuardSubmissionKey: "guard-key-1"},
 		},
 		{
-			name: "confirmation missing",
+			name:       "confirmation missing",
 			conditions: CommitConditions{CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: true, RuntimeAdmissionAllowed: true, UserConfirmed: false, GuardSubmissionKey: "guard-key-1"},
 		},
 	}
@@ -159,6 +161,7 @@ func TestCommitReplayRequiresSameGuardSubmissionKey(t *testing.T) {
 		RuntimeAdmissionAllowed: true,
 		UserConfirmed:           true,
 		GuardSubmissionKey:      "guard-key-1",
+		ActionRequestDigest: testDigest,
 	}
 	first, err := prepared.AuthorizeCommit(conditions)
 	if err != nil {
@@ -183,27 +186,41 @@ func TestMarkSubmittedToGuardRequiresReturnedOperationID(t *testing.T) {
 		t.Fatal(err)
 	}
 	committed, err := prepared.AuthorizeCommit(CommitConditions{
-		CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: true,
+		CurrentIntentRevision:   11, IntentComplete: true, CapabilityAllowed: true,
 		RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "guard-key-1",
+		ActionRequestDigest: testDigest,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := committed.MarkSubmittedToGuard(""); !errors.Is(err, ErrInvalidProposal) {
+	link := GuardOperationLink{
+		TenantID:            committed.TenantID,
+		ProposalID:          committed.ID,
+		GuardSubmissionKey:  committed.GuardSubmissionKey,
+		ActionRequestDigest: committed.ActionRequestDigest,
+	}
+	if _, err := committed.MarkSubmittedToGuard(link); !errors.Is(err, ErrInvalidProposal) {
 		t.Fatalf("expected empty Guard operation id to fail, got %v", err)
 	}
-	submitted, err := committed.MarkSubmittedToGuard("guard-operation-1")
+	link.OperationID = "guard-operation-1"
+	submitted, err := committed.MarkSubmittedToGuard(link)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := submitted.MarkSubmittedToGuard("guard-operation-1")
+	replay, err := submitted.MarkSubmittedToGuard(link)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if replay.Version != submitted.Version || replay.GuardOperationID != "guard-operation-1" {
 		t.Fatalf("unexpected Guard submission replay: %+v", replay)
 	}
-	if _, err := submitted.MarkSubmittedToGuard("guard-operation-2"); !errors.Is(err, ErrIdempotencyKeyConflict) {
+	link.OperationID = "guard-operation-2"
+	if _, err := submitted.MarkSubmittedToGuard(link); !errors.Is(err, ErrIdempotencyKeyConflict) {
 		t.Fatalf("expected changed operation conflict, got %v", err)
+	}
+	link.OperationID = "guard-operation-1"
+	link.ActionRequestDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if _, err := submitted.MarkSubmittedToGuard(link); !errors.Is(err, ErrIdempotencyKeyConflict) {
+		t.Fatalf("expected mismatched response correlation to fail, got %v", err)
 	}
 }
