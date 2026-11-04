@@ -79,6 +79,10 @@ func TestSecurityAuditAppendIsIdempotentAndAppendOnly(t *testing.T) {
 		}
 	}
 
+	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
+		t.Fatal("audit TRUNCATE unexpectedly succeeded")
+	}
+
 	var source, runID, proposalID, toolCallID, traceID string
 	if err := pool.QueryRow(ctx, `
 		SELECT source, run_id, proposal_id, tool_call_id, trace_id
