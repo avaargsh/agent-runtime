@@ -267,3 +267,27 @@ func TestIrreversibleWriteRequiresConfirmationOrApproval(t *testing.T) {
 		t.Fatalf("expected approval-gated irreversible write to pass, got %v", err)
 	}
 }
+
+func TestCommitReplayRequiresSameConfirmationEvidence(t *testing.T) {
+	prepared, err := testProposal(t).Prepare(11, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conditions := CommitConditions{
+		CurrentIntentRevision:   11,
+		IntentComplete:          true,
+		CapabilityAllowed:       true,
+		RuntimeAdmissionAllowed: true,
+		Confirmation:            testConfirmation(testDigest),
+		GuardSubmissionKey:      "guard-key-1",
+		ActionRequestDigest:     testDigest,
+	}
+	committed, err := prepared.AuthorizeCommit(conditions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conditions.Confirmation.EvidenceRef = "evidence://confirmations/another-action"
+	if _, err := committed.AuthorizeCommit(conditions); !errors.Is(err, ErrIdempotencyKeyConflict) {
+		t.Fatalf("expected changed confirmation evidence to conflict, got %v", err)
+	}
+}

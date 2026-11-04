@@ -106,12 +106,12 @@ type Proposal struct {
 	ArgumentsDigest     string
 	ActionRequestDigest string
 	ToolPolicy          ToolPolicy
-	State                ProposalState
-	Version              int64
-	GuardSubmissionKey   string
-	GuardOperationID     string
-	ConfirmationActorID  string
-	ConfirmationRef      string
+	State               ProposalState
+	Version             int64
+	GuardSubmissionKey  string
+	GuardOperationID    string
+	ConfirmationActorID string
+	ConfirmationRef     string
 }
 
 func NewProposal(input ProposalInput) (Proposal, error) {
