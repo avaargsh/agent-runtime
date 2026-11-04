@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	maxResponseBytes                  = 8192
-	DecisionModelAudience             = "model-provider"
-	DecisionUserAudience              = "runtime-user"
+	maxResponseBytes                   = 8192
+	DecisionModelAudience              = "model-provider"
+	DecisionUserAudience               = "runtime-user"
 	DecisionUserVisibleResponsePurpose = "user-visible-response"
 )
 
