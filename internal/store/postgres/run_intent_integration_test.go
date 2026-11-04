@@ -54,6 +54,17 @@ func TestAcceptIntentIsStableAfterLostAcknowledgementAndStoreRecreation(t *testi
 	if runCount != 1 || eventCount != 1 {
 		t.Fatalf("Run/outbox duplicates: %d / %d", runCount, eventCount)
 	}
+	var state string
+	var epoch, version uint64
+	if err := pool.QueryRow(ctx, `
+		SELECT state, epoch, version FROM runtime_circuit_breakers
+		WHERE scope_kind='RUN' AND scope_id=$1
+	`, first.RunID).Scan(&state, &epoch, &version); err != nil {
+		t.Fatalf("load initial Run breaker: %v", err)
+	}
+	if state != "CLOSED" || epoch != 1 || version != 1 {
+		t.Fatalf("initial Run breaker = %s/%d/%d, want CLOSED/1/1", state, epoch, version)
+	}
 }
 
 func TestAcceptIntentRejectsReusedIDWithChangedDigestOrBindings(t *testing.T) {
@@ -152,5 +163,40 @@ func TestLookupIntentDoesNotClaimFinalAbsence(t *testing.T) {
 	_, err := store.LookupIntent(context.Background(), "tenant-1", sampleIntentID, testIntent().RequestDigest)
 	if !errors.Is(err, run.ErrIntentNotFound) {
 		t.Fatalf("must not falsely claim NOT_FOUND_FINAL: %v", err)
+	}
+}
+
+func TestAcceptIntentOutboxFailureRollsBackRunAndInitialBreaker(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION reject_accept_intent_outbox() RETURNS trigger
+		LANGUAGE plpgsql AS 'BEGIN
+			RAISE EXCEPTION ''forced RunIntent outbox failure'';
+		END;'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		CREATE TRIGGER reject_accept_intent_outbox
+		BEFORE INSERT ON runtime_outbox
+		FOR EACH ROW EXECUTE FUNCTION reject_accept_intent_outbox()
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcceptIntent(ctx, testIntent()); err == nil {
+		t.Fatal("AcceptIntent succeeded despite forced outbox failure")
+	}
+	for _, query := range []string{
+		"SELECT count(*) FROM runs",
+		"SELECT count(*) FROM runtime_circuit_breakers WHERE scope_kind='RUN'",
+	} {
+		var count int
+		if err := pool.QueryRow(ctx, query).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("failed AcceptIntent left %d rows for %q", count, query)
+		}
 	}
 }
