@@ -74,3 +74,16 @@
 - [ ] Audit `musuntana/cloud-agent-runtime` SQLite decoupling and storage contract.
 - [ ] Verify legacy ProviderOperationJournal adapter semantics before migration or reuse.
 - [ ] Keep SQLite out of this Go repository; use PostgreSQL / pgx as the target persistence backend.
+
+## Gate G — Run breaker enforcement at Temporal Activity boundary (P0, issue #17)
+
+- [x] Create one CLOSED RUN breaker in the same transaction as ACP RunIntent acceptance and legacy CreateOrGet.
+- [x] Backfill existing Runs at migration v4 without overwriting existing OPEN/HALF_OPEN rows.
+- [x] Bind Activity breaker reads to both tenant_id and run_id through the authoritative runs row.
+- [x] Check breaker before Decision HTTP egress and poll the initial fencing epoch while the request remains in flight.
+- [x] Cancel the HTTP request and emit a non-retryable Temporal Activity error on OPEN/stale epoch/store uncertainty.
+- [x] Require Worker DATABASE_URL and wire PostgreSQL breaker reader at startup.
+- [ ] Verify migration rollback and exact-head Go race/vet/format + PostgreSQL 17 integration.
+- [ ] Add end-to-end Temporal cancellation test against the real HTTP Activity boundary.
+- [ ] Later local sandbox: process-group/cgroup/container termination and supervisor fencing.
+
