@@ -51,9 +51,6 @@ func (s *Store) AcceptIntent(ctx context.Context, command run.IntentStartRequest
 		command.SessionID, idem, digestHex, workflow, string(input), now,
 		command.RunIntentID, command.RequestDigest).Scan(&storedID, &storedWorkflow)
 	if err == nil {
-		if err := insertInitialRunBreaker(ctx, tx, storedID, now); err != nil {
-			return run.IntentReceipt{}, err
-		}
 		_, err = tx.Exec(ctx, `
            INSERT INTO runtime_outbox
            (outbox_id,tenant_id,aggregate_id,event_type,payload,created_at,available_at)
