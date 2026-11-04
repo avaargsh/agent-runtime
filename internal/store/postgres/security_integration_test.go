@@ -193,3 +193,147 @@ func TestCircuitBreakerPostgresTenantAndAgentScopesAreIndependent(t *testing.T) 
 		}
 	}
 }
+
+func TestTransitionBreakerWithAuditIsAtomicAndIdempotent(t *testing.T) {
+	_, store := newTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 4, 15, 0, 0, 0, time.UTC)
+	scope := breaker.Scope{Kind: breaker.ScopeRun, ID: "run-security-1"}
+
+	initial, err := breaker.NewClosed(scope, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, 0, initial); err != nil {
+		t.Fatalf("create breaker: %v", err)
+	}
+	opened, err := initial.Trip("CREDENTIAL_EXFILTRATION", "event-trigger-1", now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := securityAuditEvent()
+	event.EventID = "event-breaker-trip-atomic"
+	event.Type = audit.EventBreakerTripped
+	event.OccurredAt = now.Add(time.Second)
+	event.ReasonCode = "CREDENTIAL_EXFILTRATION"
+	event.Action = "breaker.trip"
+	event.Outcome = audit.OutcomeDenied
+	event.BreakerEpoch = opened.Epoch
+
+	if err := store.TransitionBreakerWithAudit(ctx, initial.Version, opened, event); err != nil {
+		t.Fatalf("atomic breaker transition: %v", err)
+	}
+	// Replaying the same command after a lost acknowledgement must be harmless.
+	if err := store.TransitionBreakerWithAudit(ctx, initial.Version, opened, event); err != nil {
+		t.Fatalf("idempotent transition replay: %v", err)
+	}
+
+	persisted, err := store.GetBreaker(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != breaker.StateOpen || persisted.Epoch != opened.Epoch || persisted.Version != opened.Version {
+		t.Fatalf("persisted breaker = %+v, want %+v", persisted, opened)
+	}
+	var count int
+	if err := store.poolQueryCountForTest(ctx, event.Identity.TenantID(), event.EventID, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("audit row count = %d, want 1", count)
+	}
+}
+
+func TestTransitionBreakerWithAuditRollsBackStateWhenAuditAppendFails(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 4, 16, 0, 0, 0, time.UTC)
+	scope := breaker.Scope{Kind: breaker.ScopeRun, ID: "run-security-1"}
+
+	initial, err := breaker.NewClosed(scope, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, 0, initial); err != nil {
+		t.Fatalf("create breaker: %v", err)
+	}
+	opened, err := initial.Trip("POLICY_BYPASS", "event-trigger-2", now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := securityAuditEvent()
+	event.EventID = "event-breaker-trip-fail"
+	event.Type = audit.EventBreakerTripped
+	event.OccurredAt = now.Add(time.Second)
+	event.ReasonCode = "POLICY_BYPASS"
+	event.Action = "breaker.trip"
+	event.Outcome = audit.OutcomeDenied
+	event.BreakerEpoch = opened.Epoch
+
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION reject_security_audit_event() RETURNS trigger
+		LANGUAGE plpgsql AS 'BEGIN
+			IF NEW.event_id = ''event-breaker-trip-fail'' THEN
+				RAISE EXCEPTION ''forced audit append failure'';
+			END IF;
+			RETURN NEW;
+		END;'
+	`); err != nil {
+		t.Fatalf("create audit failure function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		CREATE TRIGGER reject_security_audit_event
+		BEFORE INSERT ON runtime_security_audit_events
+		FOR EACH ROW EXECUTE FUNCTION reject_security_audit_event()
+	`); err != nil {
+		t.Fatalf("install audit failure trigger: %v", err)
+	}
+
+	if err := store.TransitionBreakerWithAudit(ctx, initial.Version, opened, event); err == nil {
+		t.Fatal("TransitionBreakerWithAudit() succeeded despite forced audit failure")
+	}
+	persisted, err := store.GetBreaker(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != breaker.StateClosed || persisted.Version != initial.Version || persisted.Epoch != initial.Epoch {
+		t.Fatalf("audit failure left a partial breaker transition: %+v", persisted)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM runtime_security_audit_events WHERE event_id=$1
+	`, event.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("failed transaction left %d audit rows, want 0", count)
+	}
+}
+
+func TestCompareAndSwapBreakerRejectsInvalidStateTransition(t *testing.T) {
+	_, store := newTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 4, 17, 0, 0, 0, time.UTC)
+	scope := breaker.Scope{Kind: breaker.ScopeRun, ID: "run-security-1"}
+	initial, err := breaker.NewClosed(scope, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, 0, initial); err != nil {
+		t.Fatal(err)
+	}
+	fabricated := initial
+	fabricated.Epoch++
+	fabricated.Version++
+	fabricated.UpdatedAt = now.Add(time.Second)
+	if err := store.CompareAndSwapBreaker(ctx, initial.Version, fabricated); !errors.Is(err, postgres.ErrBreakerVersionConflict) {
+		t.Fatalf("same-state CAS error = %v, want ErrBreakerVersionConflict", err)
+	}
+}
+
+func (s *Store) poolQueryCountForTest(ctx context.Context, tenantID, eventID string, count *int) error {
+	return s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM runtime_security_audit_events
+		WHERE tenant_id=$1 AND event_id=$2
+	`, tenantID, eventID).Scan(count)
+}
