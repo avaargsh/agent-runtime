@@ -65,11 +65,11 @@ func proposalCommitConditions() executionsafety.CommitConditions {
 		CapabilityAllowed:       true,
 		RuntimeAdmissionAllowed: true,
 		Confirmation: &executionsafety.UserConfirmation{
-			ActorID: "user-alice",
-			EvidenceRef: "evidence://confirmations/alice/read_only",
+			ActorID:             "user-alice",
+			EvidenceRef:         "evidence://confirmations/alice/read_only",
 			ActionRequestDigest: proposalDigest,
 		},
-		GuardSubmissionKey: "guard-submit-alice-readonly-1",
+		GuardSubmissionKey:  "guard-submit-alice-readonly-1",
 		ActionRequestDigest: proposalDigest,
 	}
 }
@@ -107,9 +107,9 @@ func TestProposalPostgresLifecycleIsDurableAndIdempotent(t *testing.T) {
 
 	linked, err := h.store.LinkGuardOperation(ctx, executionsafety.GuardOperationLink{
 		TenantID: h.tenantID, ProposalID: proposal.ID,
-		GuardSubmissionKey: committed.GuardSubmissionKey,
+		GuardSubmissionKey:  committed.GuardSubmissionKey,
 		ActionRequestDigest: committed.ActionRequestDigest,
-		OperationID: "guard-operation-alice-001",
+		OperationID:         "guard-operation-alice-001",
 	})
 	if err != nil {
 		t.Fatalf("LinkGuardOperation: %v", err)

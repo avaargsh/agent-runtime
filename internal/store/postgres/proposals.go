@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	ErrTurnIntentNotFound   = errors.New("TurnIntent not found")
-	ErrTurnRevisionConflict = errors.New("TurnIntent revision conflict")
-	ErrProposalNotFound     = errors.New("Tool Proposal not found")
+	ErrTurnIntentNotFound      = errors.New("TurnIntent not found")
+	ErrTurnRevisionConflict    = errors.New("TurnIntent revision conflict")
+	ErrProposalNotFound        = errors.New("Tool Proposal not found")
 	ErrProposalVersionConflict = errors.New("Tool Proposal version conflict")
 )
 
@@ -496,22 +496,22 @@ func validateNewProposal(proposal executionsafety.Proposal) (executionsafety.Pro
 }
 
 type proposalEventPayload struct {
-	TenantID            string                       `json:"tenant_id"`
-	RunID               string                       `json:"run_id"`
-	TurnID              string                       `json:"turn_id"`
-	ProposalID          string                       `json:"proposal_id"`
-	IntentRevision      int64                        `json:"intent_revision"`
-	ProposalVersion     int64                        `json:"proposal_version"`
+	TenantID            string                        `json:"tenant_id"`
+	RunID               string                        `json:"run_id"`
+	TurnID              string                        `json:"turn_id"`
+	ProposalID          string                        `json:"proposal_id"`
+	IntentRevision      int64                         `json:"intent_revision"`
+	ProposalVersion     int64                         `json:"proposal_version"`
 	State               executionsafety.ProposalState `json:"state"`
-	CapabilityID        string                       `json:"capability_id"`
-	CapabilityVersion   string                       `json:"capability_version"`
-	PolicyDigest         string                       `json:"policy_digest"`
-	ArgumentsDigest     string                       `json:"arguments_digest"`
-	ActionRequestDigest string                       `json:"action_request_digest"`
-	GuardSubmissionKey  string                       `json:"guard_submission_key,omitempty"`
-	GuardOperationID    string                       `json:"guard_operation_id,omitempty"`
-	ConfirmationActorID string                       `json:"confirmation_actor_id,omitempty"`
-	ConfirmationRef     string                       `json:"confirmation_ref,omitempty"`
+	CapabilityID        string                        `json:"capability_id"`
+	CapabilityVersion   string                        `json:"capability_version"`
+	PolicyDigest        string                        `json:"policy_digest"`
+	ArgumentsDigest     string                        `json:"arguments_digest"`
+	ActionRequestDigest string                        `json:"action_request_digest"`
+	GuardSubmissionKey  string                        `json:"guard_submission_key,omitempty"`
+	GuardOperationID    string                        `json:"guard_operation_id,omitempty"`
+	ConfirmationActorID string                        `json:"confirmation_actor_id,omitempty"`
+	ConfirmationRef     string                        `json:"confirmation_ref,omitempty"`
 }
 
 func appendProposalEvent(
@@ -525,15 +525,15 @@ func appendProposalEvent(
 		TenantID: proposal.TenantID, RunID: proposal.RunID, TurnID: proposal.TurnID,
 		ProposalID: proposal.ID, IntentRevision: proposal.IntentRevision,
 		ProposalVersion: proposal.Version, State: proposal.State,
-		CapabilityID: proposal.ToolPolicy.CapabilityID,
-		CapabilityVersion: proposal.ToolPolicy.CapabilityVersion,
-		PolicyDigest: proposal.ToolPolicy.PolicyDigest,
-		ArgumentsDigest: proposal.ArgumentsDigest,
+		CapabilityID:        proposal.ToolPolicy.CapabilityID,
+		CapabilityVersion:   proposal.ToolPolicy.CapabilityVersion,
+		PolicyDigest:        proposal.ToolPolicy.PolicyDigest,
+		ArgumentsDigest:     proposal.ArgumentsDigest,
 		ActionRequestDigest: proposal.ActionRequestDigest,
-		GuardSubmissionKey: proposal.GuardSubmissionKey,
-		GuardOperationID: proposal.GuardOperationID,
+		GuardSubmissionKey:  proposal.GuardSubmissionKey,
+		GuardOperationID:    proposal.GuardOperationID,
 		ConfirmationActorID: proposal.ConfirmationActorID,
-		ConfirmationRef: proposal.ConfirmationRef,
+		ConfirmationRef:     proposal.ConfirmationRef,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal Proposal event: %w", err)
@@ -554,13 +554,13 @@ func appendProposalEvent(
 
 func appendTurnEvent(ctx context.Context, tx pgx.Tx, eventType string, intent TurnIntent, at time.Time) error {
 	payload, err := json.Marshal(struct {
-		TenantID     string    `json:"tenant_id"`
-		RunID        string    `json:"run_id"`
-		TurnID       string    `json:"turn_id"`
-		IntentRevision int64   `json:"intent_revision"`
-		IntentComplete bool    `json:"intent_complete"`
-		Version      int64     `json:"version"`
-		UpdatedAt    time.Time `json:"updated_at"`
+		TenantID       string    `json:"tenant_id"`
+		RunID          string    `json:"run_id"`
+		TurnID         string    `json:"turn_id"`
+		IntentRevision int64     `json:"intent_revision"`
+		IntentComplete bool      `json:"intent_complete"`
+		Version        int64     `json:"version"`
+		UpdatedAt      time.Time `json:"updated_at"`
 	}{
 		TenantID: intent.TenantID, RunID: intent.RunID, TurnID: intent.TurnID,
 		IntentRevision: intent.Revision, IntentComplete: intent.Complete,
