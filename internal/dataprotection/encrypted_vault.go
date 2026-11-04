@@ -72,7 +72,7 @@ func NewEncryptedVault(store VaultRecordStore, keys KeyProvider, ttl time.Durati
 	if store == nil || keys == nil {
 		return nil, ErrMissingDependency
 	}
-	if ttl <= 0 {
+	if ttl < time.Microsecond {
 		return nil, fmt.Errorf("%w: Token Vault TTL must be positive", ErrInvalidVaultEntry)
 	}
 	return &EncryptedVault{
@@ -121,14 +121,15 @@ func (v *EncryptedVault) Put(
 		return fmt.Errorf("generate Vault nonce: %w", randomErr)
 	}
 
-	aad := vaultAssociatedData(scope, tokenID, dataType, material.ID)
+	expiresAt := v.now().UTC().Add(v.ttl).Truncate(time.Microsecond)
+	aad := vaultAssociatedData(scope, tokenID, dataType, material.ID, expiresAt)
 	ciphertext := aead.Seal(nil, nonce, plaintext, aad)
 	record := VaultRecord{
 		DataType:   dataType,
 		KeyID:      material.ID,
 		Nonce:      bytes.Clone(nonce),
 		Ciphertext: bytes.Clone(ciphertext),
-		ExpiresAt:  v.now().UTC().Add(v.ttl),
+		ExpiresAt:  expiresAt,
 	}
 	if err := v.store.Create(ctx, scope, tokenID, record); err != nil {
 		return fmt.Errorf("persist encrypted Vault record: %w", err)
@@ -152,8 +153,8 @@ func (v *EncryptedVault) Get(
 	if !found {
 		return "", nil, false, nil
 	}
-	if record.ExpiresAt.IsZero() || !v.now().Before(record.ExpiresAt) {
-		return "", nil, false, nil
+	if record.ExpiresAt.IsZero() {
+		return "", nil, false, ErrVaultAuthentication
 	}
 	if !reversibleType(record.DataType) || len(record.Ciphertext) == 0 {
 		return "", nil, false, ErrInvalidVaultEntry
@@ -177,13 +178,17 @@ func (v *EncryptedVault) Get(
 		return "", nil, false, ErrVaultAuthentication
 	}
 
-	aad := vaultAssociatedData(scope, tokenID, record.DataType, record.KeyID)
+	aad := vaultAssociatedData(scope, tokenID, record.DataType, record.KeyID, record.ExpiresAt)
 	plaintext, err := aead.Open(nil, record.Nonce, record.Ciphertext, aad)
 	if err != nil {
 		return "", nil, false, ErrVaultAuthentication
 	}
 	if len(plaintext) == 0 || !utf8.Valid(plaintext) {
 		return "", nil, false, ErrInvalidVaultEntry
+	}
+	if !v.now().Before(record.ExpiresAt) {
+		clear(plaintext)
+		return "", nil, false, nil
 	}
 	return record.DataType, plaintext, true, nil
 }
@@ -232,7 +237,7 @@ func newAEAD(key []byte) (cipher.AEAD, error) {
 
 // vaultAssociatedData uses length-prefixed fields so concatenated identity
 // values cannot collide. The scope and metadata are authenticated, not encrypted.
-func vaultAssociatedData(scope Scope, tokenID string, dataType DataType, keyID string) []byte {
+func vaultAssociatedData(scope Scope, tokenID string, dataType DataType, keyID string, expiresAt time.Time) []byte {
 	fields := []string{
 		"agent-runtime/token-vault/v1",
 		scope.TenantID,
@@ -240,6 +245,7 @@ func vaultAssociatedData(scope Scope, tokenID string, dataType DataType, keyID s
 		tokenID,
 		string(dataType),
 		keyID,
+		expiresAt.UTC().Format(time.RFC3339Nano),
 	}
 	var encoded bytes.Buffer
 	for _, field := range fields {

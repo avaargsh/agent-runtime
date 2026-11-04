@@ -253,9 +253,39 @@ func TestEncryptedVaultRejectsExpiredTokens(t *testing.T) {
 func TestNewEncryptedVaultRequiresPositiveTTL(t *testing.T) {
 	store := newMemoryRecordStore()
 	provider := &fakeKeyProvider{}
-	for _, ttl := range []time.Duration{0, -time.Second} {
+	for _, ttl := range []time.Duration{0, -time.Second, time.Nanosecond} {
 		if vault, err := NewEncryptedVault(store, provider, ttl); err == nil || vault != nil {
 			t.Fatalf("NewEncryptedVault(ttl=%s) = %v, %v; want nil vault and error", ttl, vault, err)
 		}
+	}
+}
+
+
+func TestEncryptedVaultRejectsExpiryMetadataTampering(t *testing.T) {
+	ctx := context.Background()
+	scope := Scope{TenantID: "tenant-1", RunID: "run-1"}
+	material := KeyMaterial{ID: "key-v1", Key: bytes.Repeat([]byte{7}, 32)}
+	provider := &fakeKeyProvider{
+		current: map[string]KeyMaterial{"tenant-1": material},
+		keys:    map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
+	}
+	store := newMemoryRecordStore()
+	vault, err := NewEncryptedVault(store, provider, time.Hour)
+	if err != nil {
+		t.Fatalf("NewEncryptedVault() error = %v", err)
+	}
+	vault.random = bytes.NewReader(bytes.Repeat([]byte{3}, 32))
+	tokenID := "0123456789abcdef0123456789abcdef"
+	if err := vault.Put(ctx, scope, tokenID, DataTypeEmail, []byte("alice@example.com")); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+
+	key := vaultKey(scope, tokenID)
+	record := store.records[key]
+	record.ExpiresAt = record.ExpiresAt.Add(time.Hour)
+	store.records[key] = record
+
+	if _, _, _, err := vault.Get(ctx, scope, tokenID); !errors.Is(err, ErrVaultAuthentication) {
+		t.Fatalf("Get() after expiry metadata tampering error = %v, want ErrVaultAuthentication", err)
 	}
 }
