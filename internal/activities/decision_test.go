@@ -261,7 +261,7 @@ func TestInvokeDecisionRejectsWorkflowIdentityThatDiffersFromPersistedRun(t *tes
 func TestInvokeDecisionFailsClosedWithoutTrustedRunResolver(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader()}
+	activity := Activities{Client: client, Breakers: store}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); !errors.Is(err, ErrRunIdentityUnavailable) {
 		t.Fatalf("InvokeDecision() error = %v, want ErrRunIdentityUnavailable", err)
