@@ -18,7 +18,7 @@ type DecisionInvoker interface {
 }
 
 type BreakerReader interface {
-	GetBreaker(ctx context.Context, scope breaker.Scope) (breaker.Record, error)
+	GetRunBreaker(ctx context.Context, tenantID, runID string) (breaker.Record, error)
 }
 
 type Activities struct {
@@ -39,8 +39,7 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 		return empty, err
 	}
 
-	scope := breaker.Scope{Kind: breaker.ScopeRun, ID: turn.RunID}
-	initial, err := a.Breakers.GetBreaker(ctx, scope)
+	initial, err := a.Breakers.GetRunBreaker(ctx, turn.TenantID, turn.RunID)
 	if err != nil {
 		return empty, nonRetryableBreakerError(fmt.Errorf("load Run breaker before Decision egress: %w", err))
 	}
@@ -67,7 +66,7 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 			case <-watchCtx.Done():
 				return
 			case <-ticker.C:
-				current, err := a.Breakers.GetBreaker(watchCtx, scope)
+				current, err := a.Breakers.GetRunBreaker(watchCtx, turn.TenantID, turn.RunID)
 				if err != nil {
 					select {
 					case breakerErrors <- fmt.Errorf("Run breaker became unavailable during Decision egress: %w", err):
