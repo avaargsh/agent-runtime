@@ -13,15 +13,19 @@ import (
 
 type fakeBreakerStore struct {
 	mu       sync.Mutex
-	records  []breaker.Record
-	err      error
-	calls    int
-	onLookup func(int)
+	records    []breaker.Record
+	err        error
+	calls      int
+	onLookup   func(int)
+	tenantID   string
+	runID      string
 }
 
-func (s *fakeBreakerStore) GetBreaker(_ context.Context, scope breaker.Scope) (breaker.Record, error) {
+func (s *fakeBreakerStore) GetRunBreaker(_ context.Context, tenantID, runID string) (breaker.Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.tenantID = tenantID
+	s.runID = runID
 	s.calls++
 	if s.onLookup != nil {
 		s.onLookup(s.calls)
@@ -173,5 +177,20 @@ func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 	}
 	if client.callCount() != 0 {
 		t.Fatalf("Decision client called %d times without a Run breaker, want 0", client.callCount())
+	}
+}
+
+
+func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
+	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
+	client := &fakeDecisionInvoker{}
+	activity := Activities{Client: client, Breakers: store}
+
+	_, _ = activity.InvokeDecision(context.Background(), activityTurn())
+	if store.tenantID != "tenant-001" || store.runID != "run-001" {
+		t.Fatalf("breaker lookup identity = (%q,%q), want (tenant-001,run-001)", store.tenantID, store.runID)
+	}
+	if client.callCount() != 1 {
+		t.Fatalf("Decision client calls = %d, want 1", client.callCount())
 	}
 }
