@@ -30,6 +30,7 @@ jobs:
         run: go vet ./...
       - name: Check formatting
         run: |
+          gofmt -d cmd internal
           gofmt -l cmd internal
           test -z "$(gofmt -l cmd internal)"
 
