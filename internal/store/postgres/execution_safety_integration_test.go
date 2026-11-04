@@ -3,7 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
-	"fmt"
+	"sync"
 	"strings"
 	"testing"
 
@@ -394,5 +394,4 @@ func TestConcurrentIntentAdvanceAndProposalCommitHasOneSafeOutcome(t *testing.T)
 	default:
 		t.Fatalf("unsafe outcome from concurrent correction/commit: %+v (revision advance / commit error=%v)", current, commitErr)
 	}
-	_ = fmt.Sprintf("%v", commitErr)
 }
