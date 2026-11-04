@@ -98,6 +98,28 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record ACP migration: %w", err)
 		}
 	}
+	// Migration v3 adds the Runtime-owned proposal admission projection and
+	// append-only Evidence metadata. It deliberately stores no Guard journal.
+	var v3Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 3)",
+	).Scan(&v3Applied); err != nil {
+		return fmt.Errorf("read execution safety migration ledger: %w", err)
+	}
+	if !v3Applied {
+		script, err := migrationFiles.ReadFile("migrations/0003_execution_safety.up.sql")
+		if err != nil {
+			return fmt.Errorf("read execution safety migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply execution safety migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO runtime_schema_migrations (version) VALUES (3)",
+		); err != nil {
+			return fmt.Errorf("record execution safety migration: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
