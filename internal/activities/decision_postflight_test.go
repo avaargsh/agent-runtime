@@ -38,8 +38,8 @@ func TestInvokeDecisionRejectsBreakerTripBeforeFirstPoll(t *testing.T) {
 	}
 	store := &fakeBreakerStore{records: []breaker.Record{closed}}
 	activity := Activities{
-		Breakers: store,
-		Client: flipBreakerBeforeReturn{store: store, next: opened},
+		Breakers:     store,
+		Client:       flipBreakerBeforeReturn{store: store, next: opened},
 		PollInterval: time.Hour,
 	}
 	_, err = activity.InvokeDecision(context.Background(), activityTurn())
@@ -71,8 +71,8 @@ func (f loseBreakerStoreOnReturn) Invoke(_ context.Context, turn decision.Turn) 
 func TestInvokeDecisionFailsClosedWhenPostInvocationBreakerReadFails(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	activity := Activities{
-		Breakers: store,
-		Client: loseBreakerStoreOnReturn{store: store},
+		Breakers:     store,
+		Client:       loseBreakerStoreOnReturn{store: store},
 		PollInterval: time.Hour,
 	}
 	_, err := activity.InvokeDecision(context.Background(), activityTurn())
