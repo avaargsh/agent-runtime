@@ -451,4 +451,3 @@ func TestSecurityMigrationV4RollsBackAtomically(t *testing.T) {
 		t.Fatal("pre-existing conflicting relation was removed by failed migration")
 	}
 }
-
