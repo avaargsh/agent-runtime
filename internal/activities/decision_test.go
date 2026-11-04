@@ -197,7 +197,7 @@ func TestInvokeDecisionCancelsInFlightRequestWhenBreakerOpens(t *testing.T) {
 func TestInvokeDecisionFailsClosedWhenBreakerStoreUnavailable(t *testing.T) {
 	store := &fakeBreakerStore{err: errors.New("postgres unavailable")}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded while breaker state was unavailable")
@@ -210,7 +210,7 @@ func TestInvokeDecisionFailsClosedWhenBreakerStoreUnavailable(t *testing.T) {
 func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 	store := &fakeBreakerStore{}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded without a durable Run breaker")
@@ -223,7 +223,7 @@ func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader()}
 
 	_, err := activity.InvokeDecision(context.Background(), activityTurn())
 	if err != nil {
@@ -261,7 +261,7 @@ func TestInvokeDecisionRejectsWorkflowIdentityThatDiffersFromPersistedRun(t *tes
 func TestInvokeDecisionFailsClosedWithoutTrustedRunResolver(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); !errors.Is(err, ErrRunIdentityUnavailable) {
 		t.Fatalf("InvokeDecision() error = %v, want ErrRunIdentityUnavailable", err)
@@ -291,7 +291,7 @@ type waitForPollInvoker struct {
 	pollStarted <-chan struct{}
 }
 
-func (i waitForPollInvoker) Invoke(_ context.Context, turn decision.Turn) (decision.Result, error) {
+func (i waitForPollInvoker) Invoke(_ context.Context, turn decision.Turn, _ run.Identity) (decision.Result, error) {
 	<-i.pollStarted
 	return decision.Result{
 		ProtocolVersion: turn.ProtocolVersion,
