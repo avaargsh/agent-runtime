@@ -191,9 +191,6 @@ func (s *Store) CreateOrGet(ctx context.Context, candidate run.Run) (run.Run, bo
 		candidate.CreatedAt,
 	))
 	if err == nil {
-		if err := insertInitialRunBreaker(ctx, tx, inserted.ID, inserted.CreatedAt); err != nil {
-			return run.Run{}, false, err
-		}
 		payload, marshalErr := json.Marshal(struct {
 			RunID      string `json:"run_id"`
 			WorkflowID string `json:"workflow_id"`
