@@ -257,7 +257,7 @@ func validateSpans(payload []byte, spans []Span) error {
 			(span.End < len(payload) && !utf8.RuneStart(payload[span.End])) {
 			return ErrInvalidSpan
 		}
-		if _, ok := knownType(span.Type); !ok {
+		if !knownType(span.Type) {
 			return fmt.Errorf("%w: %q", ErrUnknownDataType, span.Type)
 		}
 		previousEnd = span.End
@@ -265,8 +265,8 @@ func validateSpans(payload []byte, spans []Span) error {
 	return nil
 }
 
-func knownType(dataType DataType) (bool, bool) {
-	return reversibleType(dataType), redactedType(dataType)
+func knownType(dataType DataType) bool {
+	return reversibleType(dataType) || redactedType(dataType) || dataType == DataTypeRestricted
 }
 
 func reversibleType(dataType DataType) bool {
