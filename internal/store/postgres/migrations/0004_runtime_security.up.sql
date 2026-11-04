@@ -40,6 +40,12 @@ CREATE TRIGGER runtime_security_audit_no_update_delete
 BEFORE UPDATE OR DELETE ON runtime_security_audit_events
 FOR EACH ROW EXECUTE FUNCTION reject_runtime_security_audit_mutation();
 
+-- Row-level UPDATE/DELETE triggers do not fire for TRUNCATE. Protect the
+-- archive against ordinary table-clearing commands as well.
+CREATE TRIGGER runtime_security_audit_no_truncate
+BEFORE TRUNCATE ON runtime_security_audit_events
+FOR EACH STATEMENT EXECUTE FUNCTION reject_runtime_security_audit_mutation();
+
 CREATE TABLE runtime_circuit_breakers (
     scope_kind                 TEXT NOT NULL CHECK (scope_kind IN ('RUN', 'AGENT_INSTANCE', 'TENANT')),
     scope_id                   TEXT NOT NULL CHECK (length(scope_id) BETWEEN 1 AND 512),
