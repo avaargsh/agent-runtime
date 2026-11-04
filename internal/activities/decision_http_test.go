@@ -20,7 +20,7 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 	requestContextDone := make(chan bool, 2)
 	var requestCount atomic.Int32
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		requestStarted <- struct{}{}
 
@@ -33,6 +33,8 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 			_, _ = w.Write([]byte(`{"protocol_version":"v0.1","invocation_id":"invocation-001","kind":"final_response","text":"late response"}`))
 		}
 	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
 	defer server.Close()
 
 	closed := closedRunBreaker(t)
@@ -49,7 +51,7 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 	activity := &Activities{
 		Client: decision.Client{
 			Endpoint: server.URL,
-			HTTP:     &http.Client{Timeout: 5 * time.Second},
+			HTTP:     &http.Client{Timeout: 5 * time.Second, Transport: server.Client().Transport},
 		},
 		Breakers:     store,
 		PollInterval: 5 * time.Millisecond,
