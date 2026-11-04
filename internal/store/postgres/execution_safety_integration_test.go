@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/avaargsh/agent-runtime/internal/executionsafety"
+	"github.com/avaargsh/agent-runtime/internal/store/postgres"
 )
 
 const (
@@ -16,6 +17,58 @@ const (
 	executionRun        = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	executionTurn       = "turn-alice-access"
 )
+
+// Proposals may only be attached to a Run that the authoritative Runtime
+// store already persisted for the same tenant.
+func seedExecutionRun(t *testing.T, store *postgres.Store) {
+	t.Helper()
+	prior := candidate(executionRun)
+	prior.TenantID = executionTenant
+	if _, created, err := store.CreateOrGet(context.Background(), prior); err != nil || !created {
+		t.Fatalf("seed canonical tenant-scoped Run: created=%v err=%v", created, err)
+	}
+}
+
+func TestExecutionIntentRequiresAuthoritativeTenantRun(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	intent := executionsafety.IntentRevision{
+		TenantID: executionTenant, RunID: executionRun, TurnID: executionTurn,
+		Revision: 1, Digest: executionTestDigest, Complete: true,
+	}
+	// An arbitrary well-formed UUID is not proof of a persisted Runtime Run.
+	if err := store.AdvanceIntentRevision(ctx, intent); !errors.Is(err, executionsafety.ErrNotFound) {
+		t.Fatalf("unpersisted Run accepted an execution intent: %v", err)
+	}
+	// Even if that UUID exists, the caller's tenant must own it.
+	foreignRun := candidate(executionRun)
+	foreignRun.TenantID = "tenant-someone-else"
+	if _, created, err := store.CreateOrGet(ctx, foreignRun); err != nil || !created {
+		t.Fatalf("seed foreign-tenant Run: created=%v err=%v", created, err)
+	}
+	if err := store.AdvanceIntentRevision(ctx, intent); !errors.Is(err, executionsafety.ErrNotFound) {
+		t.Fatalf("foreign-tenant Run authorized an execution intent: %v", err)
+	}
+	var rows int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM execution_intents").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("unauthorized execution intent was durably written: %d", rows)
+	}
+}
+
+func TestExecutionIntentRejectsNonCanonicalRunUUID(t *testing.T) {
+	_, store := newTestStore(t)
+	ctx := context.Background()
+	seedExecutionRun(t, store)
+	if err := store.AdvanceIntentRevision(ctx, executionsafety.IntentRevision{
+		TenantID: executionTenant, RunID: strings.ToUpper(executionRun),
+		TurnID: executionTurn, Revision: 1, Digest: executionTestDigest, Complete: true,
+	}); !errors.Is(err, executionsafety.ErrInvalidProposal) {
+		t.Fatalf("uppercase alias of canonical Run UUID was accepted: %v", err)
+	}
+}
 
 func executionPolicy(role string) executionsafety.ToolPolicy {
 	return executionsafety.ToolPolicy{
@@ -70,6 +123,7 @@ func executionCommitConditions(proposal executionsafety.Proposal, key string) ex
 
 func TestProposalPersistenceAliceCorrectionCommitAndEvidence(t *testing.T) {
 	pool, store := newTestStore(t)
+	seedExecutionRun(t, store)
 	ctx := context.Background()
 
 	adminIntent := executionsafety.IntentRevision{
@@ -210,6 +264,7 @@ func TestProposalPersistenceAliceCorrectionCommitAndEvidence(t *testing.T) {
 
 func TestProposalCommitCannotWinAfterIntentCorrection(t *testing.T) {
 	_, store := newTestStore(t)
+	seedExecutionRun(t, store)
 	ctx := context.Background()
 
 	if err := store.AdvanceIntentRevision(ctx, executionsafety.IntentRevision{
@@ -251,6 +306,7 @@ func TestProposalCommitCannotWinAfterIntentCorrection(t *testing.T) {
 
 func TestProposalCommitEnforcesUniqueGuardSubmissionKey(t *testing.T) {
 	_, store := newTestStore(t)
+	seedExecutionRun(t, store)
 	ctx := context.Background()
 	intent := executionsafety.IntentRevision{
 		TenantID: executionTenant, RunID: executionRun, TurnID: executionTurn,
@@ -290,6 +346,7 @@ func TestProposalCommitEnforcesUniqueGuardSubmissionKey(t *testing.T) {
 
 func TestGuardOperationLinkRejectsCrossProposalOrDigestBinding(t *testing.T) {
 	_, store := newTestStore(t)
+	seedExecutionRun(t, store)
 	ctx := context.Background()
 	proposal := executionProposal(t, "proposal-guard-binding", 1, "read_only")
 	if err := store.AdvanceIntentRevision(ctx, executionsafety.IntentRevision{
@@ -324,6 +381,7 @@ func TestGuardOperationLinkRejectsCrossProposalOrDigestBinding(t *testing.T) {
 
 func TestConcurrentIntentAdvanceAndProposalCommitHasOneSafeOutcome(t *testing.T) {
 	_, store := newTestStore(t)
+	seedExecutionRun(t, store)
 	ctx := context.Background()
 	if err := store.AdvanceIntentRevision(ctx, executionsafety.IntentRevision{
 		TenantID: executionTenant, RunID: executionRun, TurnID: executionTurn,
