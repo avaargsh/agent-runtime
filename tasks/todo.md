@@ -83,7 +83,8 @@
 - [x] Check breaker before Decision HTTP egress and poll the initial fencing epoch while the request remains in flight.
 - [x] Cancel the HTTP request and emit a non-retryable Temporal Activity error on OPEN/stale epoch/store uncertainty.
 - [x] Require Worker DATABASE_URL and wire PostgreSQL breaker reader at startup.
-- [ ] Verify migration rollback and exact-head Go race/vet/format + PostgreSQL 17 integration.
-- [ ] Add end-to-end Temporal cancellation test against the real HTTP Activity boundary.
+- [ ] Verify migration rollback.
+- [x] Add end-to-end Temporal Run Workflow → Decision Activity → real HTTP cancellation test; asserts request-context cancellation and non-retryable RUN_BREAKER_BLOCKED with no second egress.
+- [ ] Pass exact-head Go race/vet/gofmt and PostgreSQL 17 integration CI after the HTTP cancellation test commit.
 - [ ] Later local sandbox: process-group/cgroup/container termination and supervisor fencing.
 
