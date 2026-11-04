@@ -68,6 +68,9 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 			case <-ticker.C:
 				current, err := a.Breakers.GetRunBreaker(watchCtx, turn.TenantID, turn.RunID)
 				if err != nil {
+					if watchCtx.Err() != nil {
+						return
+					}
 					select {
 					case breakerErrors <- fmt.Errorf("Run breaker became unavailable during Decision egress: %w", err):
 					default:
