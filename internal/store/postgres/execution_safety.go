@@ -131,10 +131,10 @@ func (s *Store) AdvanceIntentRevision(ctx context.Context, incoming executionsaf
 				return err
 			}
 			if err := insertProposalEvidence(ctx, tx, superseded, "ToolProposalSuperseded", map[string]any{
-				"proposal_id": superseded.ID,
+				"proposal_id":              superseded.ID,
 				"previous_intent_revision": proposal.IntentRevision,
-				"superseded_by_revision": incoming.Revision,
-				"state": string(superseded.State),
+				"superseded_by_revision":   incoming.Revision,
+				"state":                    string(superseded.State),
 			}, now); err != nil {
 				return err
 			}
@@ -211,11 +211,11 @@ func (s *Store) CreateProposal(ctx context.Context, proposal executionsafety.Pro
 	}
 
 	if err := insertProposalEvidence(ctx, tx, proposal, "ToolProposalCreated", map[string]any{
-		"proposal_id": proposal.ID,
-		"intent_revision": proposal.IntentRevision,
-		"arguments_digest": proposal.ArgumentsDigest,
+		"proposal_id":           proposal.ID,
+		"intent_revision":       proposal.IntentRevision,
+		"arguments_digest":      proposal.ArgumentsDigest,
 		"action_request_digest": proposal.ActionRequestDigest,
-		"state": string(proposal.State),
+		"state":                 string(proposal.State),
 	}, now); err != nil {
 		return executionsafety.Proposal{}, err
 	}
@@ -340,12 +340,12 @@ func (s *Store) CommitProposal(ctx context.Context, tenantID, proposalID string,
 		return executionsafety.Proposal{}, err
 	}
 	if err := insertProposalEvidence(ctx, tx, committed, "ProposalCommitAuthorized", map[string]any{
-		"proposal_id": committed.ID,
-		"intent_revision": committed.IntentRevision,
+		"proposal_id":           committed.ID,
+		"intent_revision":       committed.IntentRevision,
 		"action_request_digest": committed.ActionRequestDigest,
-		"guard_submission_key": committed.GuardSubmissionKey,
-		"confirmation_ref": committed.ConfirmationRef,
-		"state": string(committed.State),
+		"guard_submission_key":  committed.GuardSubmissionKey,
+		"confirmation_ref":      committed.ConfirmationRef,
+		"state":                 string(committed.State),
 	}, now); err != nil {
 		return executionsafety.Proposal{}, err
 	}
@@ -391,10 +391,10 @@ func (s *Store) LinkGuardOperation(ctx context.Context, tenantID, proposalID str
 		return executionsafety.Proposal{}, err
 	}
 	if err := insertProposalEvidence(ctx, tx, submitted, "GuardOperationLinked", map[string]any{
-		"proposal_id": submitted.ID,
-		"guard_operation_id": submitted.GuardOperationID,
+		"proposal_id":           submitted.ID,
+		"guard_operation_id":    submitted.GuardOperationID,
 		"action_request_digest": submitted.ActionRequestDigest,
-		"state": string(submitted.State),
+		"state":                 string(submitted.State),
 	}, now); err != nil {
 		return executionsafety.Proposal{}, err
 	}
