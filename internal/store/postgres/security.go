@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/avaargsh/agent-runtime/internal/audit"
@@ -142,6 +143,49 @@ func (s *Store) Append(ctx context.Context, event audit.Event) error {
 		return fmt.Errorf("commit Runtime security audit event: %w", err)
 	}
 	return nil
+}
+
+// GetRunBreaker binds a RUN breaker lookup to the authoritative Run tenant.
+// The Run row is the tenant ownership source; scope_id alone is not sufficient.
+func (s *Store) GetRunBreaker(ctx context.Context, tenantID, runID string) (breaker.Record, error) {
+	if s == nil || s.pool == nil {
+		return breaker.Record{}, errors.New("PostgreSQL pool is unavailable")
+	}
+	if tenantID == "" || strings.TrimSpace(tenantID) != tenantID || runID == "" || strings.TrimSpace(runID) != runID {
+		return breaker.Record{}, breaker.ErrInvalidScope
+	}
+	var record breaker.Record
+	var state string
+	var openedAt pgtype.Timestamptz
+	err := s.pool.QueryRow(ctx, `
+		SELECT b.scope_kind, b.scope_id, b.state, b.epoch, b.version,
+			b.reason_code, b.trigger_event_id, b.opened_at,
+			b.recovery_approval_id, b.last_recovery_evidence_ref, b.updated_at
+		FROM runtime_circuit_breakers b
+		INNER JOIN runs r
+			ON r.run_id::text = b.scope_id
+			AND b.scope_kind = 'RUN'
+		WHERE r.tenant_id=$1 AND r.run_id::text=$2
+	`, tenantID, runID).Scan(
+		&record.Scope.Kind, &record.Scope.ID, &state, &record.Epoch,
+		&record.Version, &record.ReasonCode, &record.TriggerEventID,
+		&openedAt, &record.RecoveryApprovalID,
+		&record.LastRecoveryEvidenceRef, &record.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return breaker.Record{}, ErrBreakerNotFound
+	}
+	if err != nil {
+		return breaker.Record{}, fmt.Errorf("load tenant-bound Run circuit breaker: %w", err)
+	}
+	record.State = breaker.State(state)
+	if openedAt.Valid {
+		record.OpenedAt = openedAt.Time.UTC()
+	}
+	if err := record.Validate(); err != nil {
+		return breaker.Record{}, fmt.Errorf("validate tenant-bound Run breaker: %w", err)
+	}
+	return record, nil
 }
 
 func (s *Store) GetBreaker(ctx context.Context, scope breaker.Scope) (breaker.Record, error) {
