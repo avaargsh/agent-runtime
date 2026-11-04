@@ -267,10 +267,10 @@ func TestGuardSubmissionRejectsSameKeyWithChangedDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	committed, err := prepared.AuthorizeCommit(CommitConditions{
-		CurrentIntentRevision:   12, IntentComplete: true, CapabilityAllowed: true,
+		CurrentIntentRevision: 12, IntentComplete: true, CapabilityAllowed: true,
 		RuntimeAdmissionAllowed: true, GuardSubmissionKey: "gsk-one",
-		ActionRequestDigest:     permissionRequestDigest("read_only"),
-		Confirmation:            permissionConfirmation("read_only"),
+		ActionRequestDigest: permissionRequestDigest("read_only"),
+		Confirmation:        permissionConfirmation("read_only"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -284,10 +284,10 @@ func TestGuardSubmissionRejectsSameKeyWithChangedDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	changedCommitted, err := changedPrepared.AuthorizeCommit(CommitConditions{
-		CurrentIntentRevision:   12, IntentComplete: true, CapabilityAllowed: true,
+		CurrentIntentRevision: 12, IntentComplete: true, CapabilityAllowed: true,
 		RuntimeAdmissionAllowed: true, GuardSubmissionKey: "gsk-one",
-		ActionRequestDigest:     permissionRequestDigest("administrator"),
-		Confirmation:            permissionConfirmation("administrator"),
+		ActionRequestDigest: permissionRequestDigest("administrator"),
+		Confirmation:        permissionConfirmation("administrator"),
 	})
 	if err != nil {
 		t.Fatal(err)

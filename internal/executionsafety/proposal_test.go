@@ -194,9 +194,9 @@ func TestMarkSubmittedToGuardRequiresReturnedOperationID(t *testing.T) {
 		t.Fatal(err)
 	}
 	committed, err := prepared.AuthorizeCommit(CommitConditions{
-		CurrentIntentRevision:   11, IntentComplete: true, CapabilityAllowed: true,
+		CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: true,
 		RuntimeAdmissionAllowed: true, Confirmation: testConfirmation(testDigest), GuardSubmissionKey: "guard-key-1",
-		ActionRequestDigest:     testDigest,
+		ActionRequestDigest: testDigest,
 	})
 	if err != nil {
 		t.Fatal(err)
