@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/avaargsh/agent-runtime/internal/executionsafety"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -68,6 +70,92 @@ func TestExecutionIntentRejectsNonCanonicalRunUUID(t *testing.T) {
 	}); !errors.Is(err, executionsafety.ErrInvalidProposal) {
 		t.Fatalf("uppercase alias of canonical Run UUID was accepted: %v", err)
 	}
+}
+
+// This simulates records accepted by the pre-fix repository, before
+// AdvanceIntentRevision verified a canonical, tenant-owned Runtime Run.
+// Production transitions must not promote these legacy orphan records.
+func seedLegacyOrphanIntent(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO execution_intents
+		(tenant_id, run_id, turn_id, current_revision, intent_digest,
+		 complete, created_at, updated_at)
+		VALUES ($1,$2,$3,1,$4,TRUE,now(),now())
+	`, executionTenant, executionRun, executionTurn, executionTestDigest); err != nil {
+		t.Fatalf("seed legacy orphan intent: %v", err)
+	}
+}
+
+func seedLegacyOrphanProposal(t *testing.T, pool *pgxpool.Pool, id string,
+	state executionsafety.ProposalState, version int64, guardKey any) executionsafety.Proposal {
+	t.Helper()
+	proposal := executionProposal(t, id, 1, "read_only")
+	policy, err := json.Marshal(proposal.ToolPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO execution_proposals
+		(tenant_id, proposal_id, run_id, turn_id, intent_revision,
+		 arguments_digest, action_request_digest, tool_policy, state, version,
+		 guard_submission_key, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,now(),now())
+	`, proposal.TenantID, proposal.ID, proposal.RunID, proposal.TurnID,
+		proposal.IntentRevision, proposal.ArgumentsDigest, proposal.ActionRequestDigest,
+		policy, string(state), version, guardKey); err != nil {
+		t.Fatalf("seed legacy orphan proposal: %v", err)
+	}
+	return proposal
+}
+
+func TestLegacyOrphanRunCannotCreateOrAdvanceExecutionProposal(t *testing.T) {
+	t.Run("CreateProposal", func(t *testing.T) {
+		pool, store := newTestStore(t)
+		seedLegacyOrphanIntent(t, pool)
+		proposal := executionProposal(t, "legacy-create", 1, "read_only")
+		if _, err := store.CreateProposal(context.Background(), proposal); !errors.Is(err, executionsafety.ErrNotFound) {
+			t.Fatalf("orphan intent accepted a new Proposal: %v", err)
+		}
+		var count int
+		if err := pool.QueryRow(context.Background(), "SELECT count(*) FROM execution_proposals").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("orphan proposal was persisted: %d", count)
+		}
+	})
+	t.Run("PrepareProposal", func(t *testing.T) {
+		pool, store := newTestStore(t)
+		seedLegacyOrphanIntent(t, pool)
+		proposal := seedLegacyOrphanProposal(t, pool, "legacy-prepare", executionsafety.ProposalProposed, 1, nil)
+		if _, err := store.PrepareProposal(context.Background(), executionTenant, proposal.ID, 1, true); !errors.Is(err, executionsafety.ErrNotFound) {
+			t.Fatalf("orphan proposal was prepared: %v", err)
+		}
+	})
+	t.Run("CommitProposal", func(t *testing.T) {
+		pool, store := newTestStore(t)
+		seedLegacyOrphanIntent(t, pool)
+		proposal := seedLegacyOrphanProposal(t, pool, "legacy-commit", executionsafety.ProposalPrepared, 2, nil)
+		if _, err := store.CommitProposal(context.Background(), executionTenant, proposal.ID, 2,
+			executionCommitConditions(proposal, "guard-key-legacy-commit")); !errors.Is(err, executionsafety.ErrNotFound) {
+			t.Fatalf("orphan proposal crossed Commit boundary: %v", err)
+		}
+	})
+	t.Run("LinkGuardOperation", func(t *testing.T) {
+		pool, store := newTestStore(t)
+		seedLegacyOrphanIntent(t, pool)
+		proposal := seedLegacyOrphanProposal(t, pool, "legacy-link", executionsafety.ProposalCommitAuthorized, 2, "guard-key-legacy-link")
+		link := executionsafety.GuardOperationLink{
+			TenantID: executionTenant, ProposalID: proposal.ID,
+			GuardSubmissionKey: "guard-key-legacy-link",
+			ActionRequestDigest: proposal.ActionRequestDigest,
+			OperationID: "guard-operation-orphan",
+		}
+		if _, err := store.LinkGuardOperation(context.Background(), executionTenant, proposal.ID, 2, link); !errors.Is(err, executionsafety.ErrNotFound) {
+			t.Fatalf("orphan proposal linked a Guard operation: %v", err)
+		}
+	})
 }
 
 func executionPolicy(role string) executionsafety.ToolPolicy {
