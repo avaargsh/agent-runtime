@@ -7,8 +7,8 @@ import (
 )
 
 var (
-	ErrNotFound              = errors.New("execution safety record not found")
-	ErrVersionConflict       = errors.New("execution safety version conflict")
+	ErrNotFound               = errors.New("execution safety record not found")
+	ErrVersionConflict        = errors.New("execution safety version conflict")
 	ErrIntentRevisionConflict = errors.New("intent revision digest conflict")
 )
 
