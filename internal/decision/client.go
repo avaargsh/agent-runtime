@@ -13,13 +13,34 @@ import (
 	"net/url"
 	"time"
 	"unicode/utf8"
+
+	"github.com/avaargsh/agent-runtime/internal/dataprotection"
+	"github.com/avaargsh/agent-runtime/internal/run"
 )
 
-const maxResponseBytes = 8192
+const (
+	maxResponseBytes                  = 8192
+	DecisionModelAudience             = "model-provider"
+	DecisionUserAudience              = "runtime-user"
+	DecisionUserVisibleResponsePurpose = "user-visible-response"
+)
+
+var (
+	ErrDataProtectionUnavailable = errors.New("Decision data protection is unavailable")
+	ErrRunIdentityMismatch       = errors.New("Decision Run identity does not match persisted Runtime identity")
+)
+
+// DataProtector is the mandatory egress and response boundary. Implementations
+// must fail closed on detector, Vault or authorization errors.
+type DataProtector interface {
+	ProtectOutbound(ctx context.Context, scope dataprotection.Scope, audience string, payload []byte) ([]byte, error)
+	RestoreInbound(ctx context.Context, scope dataprotection.Scope, audience, purpose string, payload []byte) ([]byte, error)
+}
 
 type Client struct {
-	Endpoint string
-	HTTP     *http.Client
+	Endpoint  string
+	HTTP      *http.Client
+	Protector DataProtector
 }
 
 func validateEndpoint(endpoint string) error {
@@ -39,15 +60,40 @@ func validateEndpoint(endpoint string) error {
 	return nil
 }
 
-func (c Client) Invoke(ctx context.Context, turn Turn) (Result, error) {
+// Invoke sends only protected user input to the remote Decision plugin. The
+// supplied identity must have been resolved from Runtime's persisted Run row
+// by the calling Activity; fields inside Turn are checked as correlation data.
+func (c Client) Invoke(ctx context.Context, turn Turn, identity run.Identity) (Result, error) {
 	var result Result
 	if err := turn.Validate(); err != nil {
 		return result, err
 	}
+	if err := identity.Validate(); err != nil {
+		return result, fmt.Errorf("invalid trusted Run identity: %w", err)
+	}
+	if identity.RunID != turn.RunID || identity.TenantID != turn.TenantID || identity.AgentID != turn.AgentID {
+		return result, ErrRunIdentityMismatch
+	}
+	if c.Protector == nil {
+		return result, ErrDataProtectionUnavailable
+	}
 	if err := validateEndpoint(c.Endpoint); err != nil {
 		return result, err
 	}
-	payload, err := json.Marshal(turn)
+
+	scope := dataprotection.Scope{TenantID: identity.TenantID, RunID: identity.RunID}
+	protectedInput, err := c.Protector.ProtectOutbound(
+		ctx,
+		scope,
+		DecisionModelAudience,
+		[]byte(turn.UserInput),
+	)
+	if err != nil {
+		return result, fmt.Errorf("protect Decision request before egress: %w", err)
+	}
+	outboundTurn := turn
+	outboundTurn.UserInput = string(protectedInput)
+	payload, err := json.Marshal(outboundTurn)
 	if err != nil {
 		return result, err
 	}
@@ -89,6 +135,21 @@ func (c Client) Invoke(ctx context.Context, turn Turn) (Result, error) {
 	}
 	if err = result.Validate(turn); err != nil {
 		return Result{}, err
+	}
+
+	restoredText, err := c.Protector.RestoreInbound(
+		ctx,
+		scope,
+		DecisionUserAudience,
+		DecisionUserVisibleResponsePurpose,
+		[]byte(result.Text),
+	)
+	if err != nil {
+		return Result{}, fmt.Errorf("restore authorized Decision response: %w", err)
+	}
+	result.Text = string(restoredText)
+	if err = result.Validate(turn); err != nil {
+		return Result{}, fmt.Errorf("validate restored Decision response: %w", err)
 	}
 	return result, nil
 }
