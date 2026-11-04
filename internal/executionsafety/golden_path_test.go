@@ -174,7 +174,6 @@ func TestAlicePermissionCorrectionGoldenPath(t *testing.T) {
 		Confirmation:            permissionConfirmation("read_only"),
 		GuardSubmissionKey:      "gsk-alice-readonly-1",
 		ActionRequestDigest:     permissionRequestDigest("read_only"),
-		Confirmation:            permissionConfirmation("read_only"),
 	})
 	if err != nil {
 		t.Fatal(err)
