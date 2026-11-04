@@ -391,17 +391,18 @@ func TestSecurityMigrationV4RollsBackAtomically(t *testing.T) {
 
 	// Return the isolated schema to the v3 shape, then install a conflicting
 	// breaker relation so migration v4 fails after creating its audit objects.
-	_, err := pool.Exec(ctx, `
-		DROP TRIGGER runs_create_initial_breaker ON runs;
-		DROP FUNCTION create_initial_run_breaker();
-		DROP TABLE runtime_circuit_breakers;
-		DROP TABLE runtime_security_audit_events;
-		DROP FUNCTION reject_runtime_security_audit_mutation();
-		DELETE FROM runtime_schema_migrations WHERE version = 4;
-		CREATE TABLE runtime_circuit_breakers (conflict_marker TEXT);
-	`)
-	if err != nil {
-		t.Fatalf("prepare v3 schema with migration conflict: %v", err)
+	for _, statement := range []string{
+		"DROP TRIGGER runs_create_initial_breaker ON runs",
+		"DROP FUNCTION create_initial_run_breaker()",
+		"DROP TABLE runtime_circuit_breakers",
+		"DROP TABLE runtime_security_audit_events",
+		"DROP FUNCTION reject_runtime_security_audit_mutation()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 4",
+		"CREATE TABLE runtime_circuit_breakers (conflict_marker TEXT)",
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("prepare v3 schema with %q: %v", statement, err)
+		}
 	}
 
 	if err := store.Migrate(ctx); err == nil {
