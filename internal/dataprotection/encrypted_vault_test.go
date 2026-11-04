@@ -82,7 +82,7 @@ func TestEncryptedVaultEncryptsAtRestAndSupportsKeyRotation(t *testing.T) {
 	newKey := KeyMaterial{ID: "key-v2", Key: bytes.Repeat([]byte{2}, 32)}
 	provider := &fakeKeyProvider{
 		current: map[string]KeyMaterial{"tenant-1": oldKey},
-		keys:    map[string]KeyMaterial{
+		keys: map[string]KeyMaterial{
 			keyLookup("tenant-1", "key-v1"): oldKey,
 			keyLookup("tenant-1", "key-v2"): newKey,
 		},
