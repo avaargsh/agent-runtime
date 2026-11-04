@@ -79,6 +79,7 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 			HTTP:     &http.Client{Timeout: 5 * time.Second, Transport: server.Client().Transport},
 		},
 		Breakers:     store,
+		Runs:         testRunIdentityReader(),
 		PollInterval: 5 * time.Millisecond,
 	}
 
