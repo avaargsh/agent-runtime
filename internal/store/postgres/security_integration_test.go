@@ -333,3 +333,25 @@ func TestCompareAndSwapBreakerRejectsInvalidStateTransition(t *testing.T) {
 		t.Fatalf("same-state CAS error = %v, want ErrBreakerVersionConflict", err)
 	}
 }
+
+func TestGetRunBreakerRequiresTenantOwnership(t *testing.T) {
+	_, store := newTestStore(t)
+	ctx := context.Background()
+	receipt, err := store.AcceptIntent(ctx, testIntent())
+	if err != nil {
+		t.Fatalf("AcceptIntent(): %v", err)
+	}
+
+	owned, err := store.GetRunBreaker(ctx, "tenant-1", receipt.RunID)
+	if err != nil {
+		t.Fatalf("owner GetRunBreaker(): %v", err)
+	}
+	if owned.Scope.Kind != breaker.ScopeRun || owned.Scope.ID != receipt.RunID {
+		t.Fatalf("owner breaker scope = %+v", owned.Scope)
+	}
+
+	if _, err := store.GetRunBreaker(ctx, "tenant-2", receipt.RunID); !errors.Is(err, postgres.ErrBreakerNotFound) {
+		t.Fatalf("cross-tenant GetRunBreaker() error = %v, want ErrBreakerNotFound", err)
+	}
+}
+
