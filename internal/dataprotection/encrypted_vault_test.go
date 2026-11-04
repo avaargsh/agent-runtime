@@ -41,6 +41,16 @@ func cloneKeyMaterial(in KeyMaterial) KeyMaterial {
 	return KeyMaterial{ID: in.ID, Key: bytes.Clone(in.Key)}
 }
 
+
+func cloneVaultRecord(in VaultRecord) VaultRecord {
+	return VaultRecord{
+		DataType:   in.DataType,
+		KeyID:      in.KeyID,
+		Nonce:      bytes.Clone(in.Nonce),
+		Ciphertext: bytes.Clone(in.Ciphertext),
+	}
+}
+
 type memoryRecordStore struct {
 	records map[string]VaultRecord
 }
