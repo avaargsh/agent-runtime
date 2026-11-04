@@ -270,6 +270,7 @@ func TestGuardSubmissionRejectsSameKeyWithChangedDigest(t *testing.T) {
 		CurrentIntentRevision:   12, IntentComplete: true, CapabilityAllowed: true,
 		RuntimeAdmissionAllowed: true, GuardSubmissionKey: "gsk-one",
 		ActionRequestDigest:     permissionRequestDigest("read_only"),
+		Confirmation:            permissionConfirmation("read_only"),
 	})
 	if err != nil {
 		t.Fatal(err)
