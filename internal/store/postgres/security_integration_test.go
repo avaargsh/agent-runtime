@@ -98,6 +98,43 @@ func TestSecurityAuditAppendIsIdempotentAndAppendOnly(t *testing.T) {
 	}
 }
 
+// A database that already recorded migration v4 must receive the TRUNCATE
+// protection on upgrade; editing the v4 SQL cannot repair an applied database.
+func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `DROP TRIGGER runtime_security_audit_no_truncate ON runtime_security_audit_events`); err != nil {
+		t.Fatalf("simulate original v4 schema without TRUNCATE guard: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM runtime_schema_migrations WHERE version = 5`); err != nil {
+		t.Fatalf("simulate original applied-v4 version ledger: %v", err)
+	}
+	var version int
+	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 4 {
+		t.Fatalf("migration version before upgrade = %d, want 4", version)
+	}
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("upgrade existing v4 schema: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 5 {
+		t.Fatalf("migration version after upgrade = %d, want 5", version)
+	}
+	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
+		t.Fatal("previously applied v4 database still permits audit TRUNCATE")
+	}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("repeat migration v5: %v", err)
+	}
+}
+
 func TestCircuitBreakerPostgresCreateTransitionAndStaleWriterConflict(t *testing.T) {
 	_, store := newTestStore(t)
 	ctx := context.Background()
