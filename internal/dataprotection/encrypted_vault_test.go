@@ -166,7 +166,7 @@ func TestEncryptedVaultRejectsDuplicateTokenAndNeverOverwrites(t *testing.T) {
 	material := KeyMaterial{ID: "key-v1", Key: bytes.Repeat([]byte{4}, 32)}
 	provider := &fakeKeyProvider{
 		current: map[string]KeyMaterial{"tenant-1": material},
-		keys: map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
+		keys:    map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
 	}
 	store := newMemoryRecordStore()
 	vault, err := NewEncryptedVault(store, provider, time.Hour)
@@ -193,7 +193,7 @@ func TestEncryptedVaultFailsClosedOnUnknownKeyOrCorruptedCiphertext(t *testing.T
 	material := KeyMaterial{ID: "key-v1", Key: bytes.Repeat([]byte{5}, 32)}
 	provider := &fakeKeyProvider{
 		current: map[string]KeyMaterial{"tenant-1": material},
-		keys: map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
+		keys:    map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
 	}
 	store := newMemoryRecordStore()
 	vault, err := NewEncryptedVault(store, provider, time.Hour)
@@ -225,7 +225,7 @@ func TestEncryptedVaultRejectsExpiredTokens(t *testing.T) {
 	material := KeyMaterial{ID: "key-v1", Key: bytes.Repeat([]byte{6}, 32)}
 	provider := &fakeKeyProvider{
 		current: map[string]KeyMaterial{"tenant-1": material},
-		keys: map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
+		keys:    map[string]KeyMaterial{keyLookup("tenant-1", "key-v1"): material},
 	}
 	store := newMemoryRecordStore()
 	vault, err := NewEncryptedVault(store, provider, time.Minute)
@@ -259,7 +259,6 @@ func TestNewEncryptedVaultRequiresPositiveTTL(t *testing.T) {
 		}
 	}
 }
-
 
 func TestEncryptedVaultRejectsExpiryMetadataTampering(t *testing.T) {
 	ctx := context.Background()
