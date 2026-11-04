@@ -41,6 +41,26 @@ func (s *Store) AdvanceIntentRevision(ctx context.Context, incoming executionsaf
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
+	// The canonical Runtime Run must already exist under the same tenant.
+	// A caller-supplied UUID or Decision Turn alone is not ownership proof.
+	// Hold a key-share lock through the intent mutation to fence concurrent
+	// deletion or identity-changing updates of the authoritative Run.
+	var persistedRunID string
+	err = tx.QueryRow(ctx, `
+		SELECT run_id::text FROM runs
+		WHERE tenant_id=$1 AND run_id=$2::uuid
+		FOR KEY SHARE
+	`, incoming.TenantID, incoming.RunID).Scan(&persistedRunID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return executionsafety.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("verify authoritative execution Run: %w", err)
+	}
+	if persistedRunID != incoming.RunID {
+		return executionsafety.ErrInvalidProposal
+	}
+
 	now := time.Now().UTC()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO execution_intents
@@ -546,6 +566,10 @@ func validateIntentRevision(in executionsafety.IntentRevision) error {
 		if value == "" || strings.TrimSpace(value) != value || len(value) > 255 || strings.ContainsRune(value, 0) {
 			return executionsafety.ErrInvalidProposal
 		}
+	}
+	parsedRunID, err := uuid.Parse(in.RunID)
+	if err != nil || parsedRunID.String() != in.RunID {
+		return executionsafety.ErrInvalidProposal
 	}
 	if in.Revision < 1 || !isSHA256Digest(in.Digest) {
 		return executionsafety.ErrInvalidProposal
