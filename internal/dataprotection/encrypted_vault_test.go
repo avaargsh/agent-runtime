@@ -42,7 +42,6 @@ func cloneKeyMaterial(in KeyMaterial) KeyMaterial {
 	return KeyMaterial{ID: in.ID, Key: bytes.Clone(in.Key)}
 }
 
-
 func cloneVaultRecord(in VaultRecord) VaultRecord {
 	return VaultRecord{
 		DataType:   in.DataType,
@@ -83,7 +82,7 @@ func TestEncryptedVaultEncryptsAtRestAndSupportsKeyRotation(t *testing.T) {
 	newKey := KeyMaterial{ID: "key-v2", Key: bytes.Repeat([]byte{2}, 32)}
 	provider := &fakeKeyProvider{
 		current: map[string]KeyMaterial{"tenant-1": oldKey},
-		keys: map[string]KeyMaterial{
+		keys:    map[string]KeyMaterial{
 			keyLookup("tenant-1", "key-v1"): oldKey,
 			keyLookup("tenant-1", "key-v2"): newKey,
 		},
@@ -219,7 +218,6 @@ func TestEncryptedVaultFailsClosedOnUnknownKeyOrCorruptedCiphertext(t *testing.T
 		t.Fatalf("Get() after ciphertext tampering error = %v, want ErrVaultAuthentication", err)
 	}
 }
-
 
 func TestEncryptedVaultRejectsExpiredTokens(t *testing.T) {
 	ctx := context.Background()
