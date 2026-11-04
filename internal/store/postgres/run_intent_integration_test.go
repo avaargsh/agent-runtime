@@ -200,4 +200,3 @@ func TestAcceptIntentOutboxFailureRollsBackRunAndInitialBreaker(t *testing.T) {
 		}
 	}
 }
-
