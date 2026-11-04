@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	ErrRunNotFound    = errors.New("Runtime Run identity not found")
+	ErrRunNotFound     = errors.New("Runtime Run identity not found")
 	ErrInvalidIdentity = errors.New("invalid Runtime Run identity")
 )
 
