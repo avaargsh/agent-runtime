@@ -148,9 +148,9 @@ func TestLegacyOrphanRunCannotCreateOrAdvanceExecutionProposal(t *testing.T) {
 		proposal := seedLegacyOrphanProposal(t, pool, "legacy-link", executionsafety.ProposalCommitAuthorized, 2, "guard-key-legacy-link")
 		link := executionsafety.GuardOperationLink{
 			TenantID: executionTenant, ProposalID: proposal.ID,
-			GuardSubmissionKey: "guard-key-legacy-link",
+			GuardSubmissionKey:  "guard-key-legacy-link",
 			ActionRequestDigest: proposal.ActionRequestDigest,
-			OperationID: "guard-operation-orphan",
+			OperationID:         "guard-operation-orphan",
 		}
 		if _, err := store.LinkGuardOperation(context.Background(), executionTenant, proposal.ID, 2, link); !errors.Is(err, executionsafety.ErrNotFound) {
 			t.Fatalf("orphan proposal linked a Guard operation: %v", err)
