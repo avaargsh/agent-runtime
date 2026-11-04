@@ -42,7 +42,10 @@ type Activities struct {
 // correlation claims only and must match the persisted Run row.
 func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (decision.Result, error) {
 	var empty decision.Result
-	if a == nil || a.Client == nil || a.Breakers == nil || a.Runs == nil {
+	if a == nil || a.Client == nil || a.Breakers == nil {
+		return empty, ErrBreakerGuardUnavailable
+	}
+	if a.Runs == nil {
 		return empty, ErrRunIdentityUnavailable
 	}
 	if err := turn.Validate(); err != nil {
