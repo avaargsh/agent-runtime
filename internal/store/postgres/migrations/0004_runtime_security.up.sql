@@ -67,3 +67,12 @@ CREATE TABLE runtime_circuit_breakers (
 
 CREATE INDEX runtime_circuit_breakers_state_idx
     ON runtime_circuit_breakers (state, updated_at DESC);
+
+-- Existing Runs receive a default CLOSED breaker exactly once. Existing OPEN
+-- or HALF_OPEN records are preserved by the primary-key conflict rule.
+INSERT INTO runtime_circuit_breakers (
+    scope_kind, scope_id, state, epoch, version, updated_at
+)
+SELECT 'RUN', run_id::text, 'CLOSED', 1, 1, updated_at
+FROM runs
+ON CONFLICT (scope_kind, scope_id) DO NOTHING;
