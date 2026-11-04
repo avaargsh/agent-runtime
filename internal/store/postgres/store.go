@@ -120,6 +120,29 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record Runtime Proposal migration: %w", err)
 		}
 	}
+	// Migration v4 adds the append-only Runtime security audit archive and
+	// durable versioned circuit-breaker state. It remains separate from the
+	// execution outbox, which is a delivery mechanism.
+	var v4Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 4)",
+	).Scan(&v4Applied); err != nil {
+		return fmt.Errorf("read Runtime security migration ledger: %w", err)
+	}
+	if !v4Applied {
+		script, err := migrationFiles.ReadFile("migrations/0004_runtime_security.up.sql")
+		if err != nil {
+			return fmt.Errorf("read Runtime security migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply Runtime security migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO runtime_schema_migrations (version) VALUES (4)",
+		); err != nil {
+			return fmt.Errorf("record Runtime security migration: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
