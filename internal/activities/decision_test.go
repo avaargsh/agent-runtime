@@ -69,6 +69,21 @@ func (f *fakeDecisionInvoker) Invoke(ctx context.Context, turn decision.Turn) (d
 	return decision.Result{}, ctx.Err()
 }
 
+
+type immediateDecisionInvoker struct {
+	calls int
+}
+
+func (f *immediateDecisionInvoker) Invoke(_ context.Context, turn decision.Turn) (decision.Result, error) {
+	f.calls++
+	return decision.Result{
+		ProtocolVersion: turn.ProtocolVersion,
+		InvocationID:    turn.InvocationID,
+		Kind:            "final_response",
+		Text:            "ok",
+	}, nil
+}
+
 func (f *fakeDecisionInvoker) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -183,14 +198,17 @@ func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 
 func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
-	client := &fakeDecisionInvoker{}
+	client := &immediateDecisionInvoker{}
 	activity := Activities{Client: client, Breakers: store}
 
-	_, _ = activity.InvokeDecision(context.Background(), activityTurn())
+	_, err := activity.InvokeDecision(context.Background(), activityTurn())
+	if err != nil {
+		t.Fatalf("InvokeDecision() error = %v", err)
+	}
 	if store.tenantID != "tenant-001" || store.runID != "run-001" {
 		t.Fatalf("breaker lookup identity = (%q,%q), want (tenant-001,run-001)", store.tenantID, store.runID)
 	}
-	if client.callCount() != 1 {
-		t.Fatalf("Decision client calls = %d, want 1", client.callCount())
+	if client.calls != 1 {
+		t.Fatalf("Decision client calls = %d, want 1", client.calls)
 	}
 }
