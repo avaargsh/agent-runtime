@@ -15,3 +15,9 @@ Owns Run identity, durable execution coordination, Run/Task lifecycle projection
 - All protected side effects pass through EngageGuard and a trusted executor.
 
 The Runtime does not implement a workflow engine or a generic Agent Framework.
+
+## Architecture and contracts
+
+- [Runtime reliability acceptance](docs/RELIABILITY-ACCEPTANCE.md)
+- [Decision ↔ Runtime ↔ EngageGuard integration contract](docs/architecture/DECISION-INTEGRATION-CONTRACT.md)
+- [Agent Execution Safety RFC](docs/architecture/AGENT-EXECUTION-SAFETY-RFC.md)
