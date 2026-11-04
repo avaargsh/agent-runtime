@@ -98,6 +98,28 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record ACP migration: %w", err)
 		}
 	}
+	// Migration v3 adds Runtime-owned TurnIntent / Proposal state and its
+	// append-only event outbox under the same advisory-locked transaction.
+	var v3Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 3)",
+	).Scan(&v3Applied); err != nil {
+		return fmt.Errorf("read Runtime Proposal migration ledger: %w", err)
+	}
+	if !v3Applied {
+		script, err := migrationFiles.ReadFile("migrations/0003_runtime_proposals.up.sql")
+		if err != nil {
+			return fmt.Errorf("read Runtime Proposal migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply Runtime Proposal migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO runtime_schema_migrations (version) VALUES (3)",
+		); err != nil {
+			return fmt.Errorf("record Runtime Proposal migration: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
