@@ -355,3 +355,33 @@ func TestGetRunBreakerRequiresTenantOwnership(t *testing.T) {
 	}
 }
 
+func TestRunInsertTriggerCreatesClosedBreakerForDirectSQLWriter(t *testing.T) {
+	pool, _ := newTestStore(t)
+	ctx := context.Background()
+	runCandidate := candidate("00000000-0000-4000-8000-000000000099")
+	_, err := pool.Exec(ctx, `
+		INSERT INTO runs (
+			run_id, tenant_id, agent_id, agent_release_id, session_id,
+			idempotency_key, request_digest, workflow_id, status, input,
+			created_at, updated_at
+		) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+	`, runCandidate.ID, runCandidate.TenantID, runCandidate.AgentID,
+		runCandidate.AgentReleaseID, runCandidate.SessionID, runCandidate.IdempotencyKey,
+		runCandidate.RequestDigest, runCandidate.WorkflowID, string(runCandidate.Status),
+		string(runCandidate.Input), runCandidate.CreatedAt, runCandidate.UpdatedAt)
+	if err != nil {
+		t.Fatalf("direct Run insert: %v", err)
+	}
+	var state string
+	var epoch, version uint64
+	if err := pool.QueryRow(ctx, `
+		SELECT state, epoch, version FROM runtime_circuit_breakers
+		WHERE scope_kind='RUN' AND scope_id=$1
+	`, runCandidate.ID).Scan(&state, &epoch, &version); err != nil {
+		t.Fatalf("Run insert trigger did not create breaker: %v", err)
+	}
+	if state != "CLOSED" || epoch != 1 || version != 1 {
+		t.Fatalf("trigger-created breaker = %s/%d/%d, want CLOSED/1/1", state, epoch, version)
+	}
+}
+
