@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,14 +16,37 @@ import (
 	"go.temporal.io/sdk/testsuite"
 )
 
+type requestGatedBreakerStore struct {
+	closed         breaker.Record
+	opened         breaker.Record
+	requestReached <-chan struct{}
+	lookups        atomic.Int32
+}
+
+func (s *requestGatedBreakerStore) GetRunBreaker(ctx context.Context, _, _ string) (breaker.Record, error) {
+	if err := ctx.Err(); err != nil {
+		return breaker.Record{}, err
+	}
+	if s.lookups.Add(1) == 1 {
+		return s.closed, nil
+	}
+	select {
+	case <-s.requestReached:
+		return s.opened, nil
+	default:
+		return s.closed, nil
+	}
+}
+
 func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
-	requestStarted := make(chan struct{}, 2)
+	requestReached := make(chan struct{})
 	requestContextDone := make(chan bool, 2)
 	var requestCount atomic.Int32
+	var requestOnce sync.Once
 
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
-		requestStarted <- struct{}{}
+		requestOnce.Do(func() { close(requestReached) })
 
 		select {
 		case <-r.Context().Done():
@@ -47,7 +71,7 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 		t.Fatalf("trip Run breaker: %v", err)
 	}
 
-	store := &fakeBreakerStore{records: []breaker.Record{closed, opened}}
+	store := &requestGatedBreakerStore{closed: closed, opened: opened, requestReached: requestReached}
 	activity := &Activities{
 		Client: decision.Client{
 			Endpoint: server.URL,
@@ -79,7 +103,7 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 	}
 
 	select {
-	case <-requestStarted:
+	case <-requestReached:
 	default:
 		t.Fatal("Decision HTTP request never reached the remote plugin")
 	}
@@ -95,7 +119,7 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 	if got := requestCount.Load(); got != 1 {
 		t.Fatalf("remote Decision HTTP request count = %d, want exactly 1 (no retry)", got)
 	}
-	if got := store.callCount(); got != 2 {
-		t.Fatalf("Run breaker lookups = %d, want exactly 2 (preflight + in-flight watcher)", got)
+	if got := store.lookups.Load(); got < 2 {
+		t.Fatalf("Run breaker lookups = %d, want preflight plus in-flight polling", got)
 	}
 }
