@@ -19,7 +19,7 @@ type Claims struct {
 	SessionID      string
 	RunID          string
 	RunAttemptID   string
-	TurnID          string
+	TurnID         string
 	PolicyRevision string
 }
 
