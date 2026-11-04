@@ -384,3 +384,70 @@ func TestRunInsertTriggerCreatesClosedBreakerForDirectSQLWriter(t *testing.T) {
 		t.Fatalf("trigger-created breaker = %s/%d/%d, want CLOSED/1/1", state, epoch, version)
 	}
 }
+
+func TestSecurityMigrationV4RollsBackAtomically(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+
+	// Return the isolated schema to the v3 shape, then install a conflicting
+	// breaker relation so migration v4 fails after creating its audit objects.
+	_, err := pool.Exec(ctx, `
+		DROP TRIGGER runs_create_initial_breaker ON runs;
+		DROP FUNCTION create_initial_run_breaker();
+		DROP TABLE runtime_circuit_breakers;
+		DROP TABLE runtime_security_audit_events;
+		DROP FUNCTION reject_runtime_security_audit_mutation();
+		DELETE FROM runtime_schema_migrations WHERE version = 4;
+		CREATE TABLE runtime_circuit_breakers (conflict_marker TEXT);
+	`)
+	if err != nil {
+		t.Fatalf("prepare v3 schema with migration conflict: %v", err)
+	}
+
+	if err := store.Migrate(ctx); err == nil {
+		t.Fatal("Migrate() succeeded despite conflicting v4 breaker relation")
+	}
+
+	for name, query := range map[string]string{
+		"v4 schema ledger": `
+			SELECT EXISTS (
+				SELECT 1 FROM runtime_schema_migrations WHERE version = 4
+			)
+		`,
+		"audit table": `
+			SELECT to_regclass('runtime_security_audit_events') IS NOT NULL
+		`,
+		"audit mutation function": `
+			SELECT to_regprocedure('reject_runtime_security_audit_mutation()') IS NOT NULL
+		`,
+		"Run breaker trigger": `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_trigger
+				WHERE tgname = 'runs_create_initial_breaker'
+				  AND NOT tgisinternal
+			)
+		`,
+		"Run breaker trigger function": `
+			SELECT to_regprocedure('create_initial_run_breaker()') IS NOT NULL
+		`,
+	} {
+		var exists bool
+		if err := pool.QueryRow(ctx, query).Scan(&exists); err != nil {
+			t.Fatalf("inspect %s after failed migration: %v", name, err)
+		}
+		if exists {
+			t.Errorf("%s survived failed migration; expected transaction rollback", name)
+		}
+	}
+
+	var conflictTableExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT to_regclass('runtime_circuit_breakers') IS NOT NULL
+	`).Scan(&conflictTableExists); err != nil {
+		t.Fatalf("inspect conflicting relation: %v", err)
+	}
+	if !conflictTableExists {
+		t.Fatal("pre-existing conflicting relation was removed by failed migration")
+	}
+}
+
