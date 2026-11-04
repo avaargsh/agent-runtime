@@ -18,9 +18,9 @@ import (
 )
 
 var (
-	ErrVaultRecordExists  = errors.New("Vault token record already exists")
+	ErrVaultRecordExists   = errors.New("Vault token record already exists")
 	ErrVaultAuthentication = errors.New("Vault record authentication failed")
-	ErrVaultKeyInvalid    = errors.New("Vault encryption key is invalid")
+	ErrVaultKeyInvalid     = errors.New("Vault encryption key is invalid")
 )
 
 // KeyMaterial identifies one tenant encryption key. Key bytes are supplied by
@@ -76,11 +76,11 @@ func NewEncryptedVault(store VaultRecordStore, keys KeyProvider, ttl time.Durati
 		return nil, fmt.Errorf("%w: Token Vault TTL must be positive", ErrInvalidVaultEntry)
 	}
 	return &EncryptedVault{
-		store: store,
-		keys: keys,
+		store:  store,
+		keys:   keys,
 		random: rand.Reader,
-		ttl: ttl,
-		now: time.Now,
+		ttl:    ttl,
+		now:    time.Now,
 	}, nil
 }
 
