@@ -41,24 +41,8 @@ func (s *Store) AdvanceIntentRevision(ctx context.Context, incoming executionsaf
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	// The canonical Runtime Run must already exist under the same tenant.
-	// A caller-supplied UUID or Decision Turn alone is not ownership proof.
-	// Hold a key-share lock through the intent mutation to fence concurrent
-	// deletion or identity-changing updates of the authoritative Run.
-	var persistedRunID string
-	err = tx.QueryRow(ctx, `
-		SELECT run_id::text FROM runs
-		WHERE tenant_id=$1 AND run_id=$2::uuid
-		FOR KEY SHARE
-	`, incoming.TenantID, incoming.RunID).Scan(&persistedRunID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return executionsafety.ErrNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("verify authoritative execution Run: %w", err)
-	}
-	if persistedRunID != incoming.RunID {
-		return executionsafety.ErrInvalidProposal
+	if err := requireAuthoritativeRun(ctx, tx, incoming.TenantID, incoming.RunID); err != nil {
+		return err
 	}
 
 	now := time.Now().UTC()
@@ -183,6 +167,11 @@ func (s *Store) CreateProposal(ctx context.Context, proposal executionsafety.Pro
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
+	// A legacy intent row does not prove its Run still exists or belongs to
+	// this tenant. Verify the authoritative Runtime Run before admitting work.
+	if err := requireAuthoritativeRun(ctx, tx, proposal.TenantID, proposal.RunID); err != nil {
+		return executionsafety.Proposal{}, err
+	}
 	var currentRevision int64
 	err = tx.QueryRow(ctx, `
 		SELECT current_revision FROM execution_intents
@@ -259,6 +248,9 @@ func (s *Store) PrepareProposal(ctx context.Context, tenantID, proposalID string
 	if err != nil {
 		return executionsafety.Proposal{}, err
 	}
+	if err := requireAuthoritativeRun(ctx, tx, tenantID, scope.RunID); err != nil {
+		return executionsafety.Proposal{}, err
+	}
 	var currentRevision int64
 	err = tx.QueryRow(ctx, `
 		SELECT current_revision FROM execution_intents
@@ -312,6 +304,9 @@ func (s *Store) CommitProposal(ctx context.Context, tenantID, proposalID string,
 
 	scope, err := readProposalScope(ctx, tx, tenantID, proposalID)
 	if err != nil {
+		return executionsafety.Proposal{}, err
+	}
+	if err := requireAuthoritativeRun(ctx, tx, tenantID, scope.RunID); err != nil {
 		return executionsafety.Proposal{}, err
 	}
 	var intent intentScope
@@ -390,6 +385,9 @@ func (s *Store) LinkGuardOperation(ctx context.Context, tenantID, proposalID str
 		WHERE tenant_id=$1 AND proposal_id=$2 FOR UPDATE
 	`, tenantID, proposalID))
 	if err != nil {
+		return executionsafety.Proposal{}, err
+	}
+	if err := requireAuthoritativeRun(ctx, tx, tenantID, proposal.RunID); err != nil {
 		return executionsafety.Proposal{}, err
 	}
 	isReplay := proposal.State == executionsafety.ProposalSubmittedToGuard
@@ -557,6 +555,32 @@ func insertProposalEvidence(ctx context.Context, tx pgx.Tx, p executionsafety.Pr
 	`, uuid.NewString(), p.TenantID, p.ID, eventType, p.Version, p.IntentRevision, string(data), now)
 	if err != nil {
 		return fmt.Errorf("append proposal Evidence: %w", err)
+	}
+	return nil
+}
+
+// requireAuthoritativeRun is the common fail-closed ownership fence for
+// both new and legacy Execution Safety records. The key-share lock is held
+// until the caller commits or rolls back its state transition.
+func requireAuthoritativeRun(ctx context.Context, tx pgx.Tx, tenantID, runID string) error {
+	parsedRunID, err := uuid.Parse(runID)
+	if err != nil || parsedRunID.String() != runID {
+		return executionsafety.ErrInvalidProposal
+	}
+	var persistedRunID string
+	err = tx.QueryRow(ctx, `
+		SELECT run_id::text FROM runs
+		WHERE tenant_id=$1 AND run_id=$2::uuid
+		FOR KEY SHARE
+	`, tenantID, runID).Scan(&persistedRunID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return executionsafety.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("verify authoritative execution Run: %w", err)
+	}
+	if persistedRunID != runID {
+		return executionsafety.ErrInvalidProposal
 	}
 	return nil
 }
