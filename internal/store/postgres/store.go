@@ -143,6 +143,28 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record Runtime security migration: %w", err)
 		}
 	}
+	// Migration v5 installs TRUNCATE protection for previously migrated v4
+	// databases. The original v4 script must remain unchanged.
+	var v5Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 5)",
+	).Scan(&v5Applied); err != nil {
+		return fmt.Errorf("read Runtime audit TRUNCATE migration ledger: %w", err)
+	}
+	if !v5Applied {
+		script, err := migrationFiles.ReadFile("migrations/0005_runtime_security_audit_truncate.up.sql")
+		if err != nil {
+			return fmt.Errorf("read Runtime audit TRUNCATE migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply Runtime audit TRUNCATE migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO runtime_schema_migrations (version) VALUES (5)",
+		); err != nil {
+			return fmt.Errorf("record Runtime audit TRUNCATE migration: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
