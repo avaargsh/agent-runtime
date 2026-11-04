@@ -21,6 +21,14 @@ func testPolicy() ToolPolicy {
 	}
 }
 
+func testConfirmation(digest string) *UserConfirmation {
+	return &UserConfirmation{
+		ActorID:             "user-1",
+		EvidenceRef:         "evidence://confirmations/confirm-1",
+		ActionRequestDigest: digest,
+	}
+}
+
 func testProposal(t *testing.T) Proposal {
 	t.Helper()
 	proposal, err := NewProposal(ProposalInput{
@@ -97,9 +105,9 @@ func TestSupersedeIsAllowedOnlyBeforeCommitBoundary(t *testing.T) {
 		IntentComplete:          true,
 		CapabilityAllowed:       true,
 		RuntimeAdmissionAllowed: true,
-		UserConfirmed:           true,
+		Confirmation:            testConfirmation(testDigest),
 		GuardSubmissionKey:      "guard-key-1",
-		ActionRequestDigest: testDigest,
+		ActionRequestDigest:     testDigest,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,19 +128,19 @@ func TestCommitRequiresAllRuntimeAdmissionConditions(t *testing.T) {
 	}{
 		{
 			name:       "incomplete intent",
-			conditions: CommitConditions{CurrentIntentRevision: 11, CapabilityAllowed: true, RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "guard-key-1"},
+			conditions: CommitConditions{CurrentIntentRevision: 11, CapabilityAllowed: true, RuntimeAdmissionAllowed: true, Confirmation: testConfirmation(testDigest), GuardSubmissionKey: "guard-key-1"},
 		},
 		{
 			name:       "stale revision",
-			conditions: CommitConditions{CurrentIntentRevision: 12, IntentComplete: true, CapabilityAllowed: true, RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "guard-key-1"},
+			conditions: CommitConditions{CurrentIntentRevision: 12, IntentComplete: true, CapabilityAllowed: true, RuntimeAdmissionAllowed: true, Confirmation: testConfirmation(testDigest), GuardSubmissionKey: "guard-key-1"},
 		},
 		{
 			name:       "capability revoked",
-			conditions: CommitConditions{CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: false, RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "guard-key-1"},
+			conditions: CommitConditions{CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: false, RuntimeAdmissionAllowed: true, Confirmation: testConfirmation(testDigest), GuardSubmissionKey: "guard-key-1"},
 		},
 		{
 			name:       "runtime admission denied",
-			conditions: CommitConditions{CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: true, RuntimeAdmissionAllowed: false, UserConfirmed: true, GuardSubmissionKey: "guard-key-1"},
+			conditions: CommitConditions{CurrentIntentRevision: 11, IntentComplete: true, CapabilityAllowed: true, RuntimeAdmissionAllowed: false, Confirmation: testConfirmation(testDigest), GuardSubmissionKey: "guard-key-1"},
 		},
 		{
 			name:       "confirmation missing",
@@ -159,9 +167,9 @@ func TestCommitReplayRequiresSameGuardSubmissionKey(t *testing.T) {
 		IntentComplete:          true,
 		CapabilityAllowed:       true,
 		RuntimeAdmissionAllowed: true,
-		UserConfirmed:           true,
+		Confirmation:            testConfirmation(testDigest),
 		GuardSubmissionKey:      "guard-key-1",
-		ActionRequestDigest: testDigest,
+		ActionRequestDigest:     testDigest,
 	}
 	first, err := prepared.AuthorizeCommit(conditions)
 	if err != nil {
@@ -187,8 +195,8 @@ func TestMarkSubmittedToGuardRequiresReturnedOperationID(t *testing.T) {
 	}
 	committed, err := prepared.AuthorizeCommit(CommitConditions{
 		CurrentIntentRevision:   11, IntentComplete: true, CapabilityAllowed: true,
-		RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "guard-key-1",
-		ActionRequestDigest: testDigest,
+		RuntimeAdmissionAllowed: true, Confirmation: testConfirmation(testDigest), GuardSubmissionKey: "guard-key-1",
+		ActionRequestDigest:     testDigest,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -222,5 +230,40 @@ func TestMarkSubmittedToGuardRequiresReturnedOperationID(t *testing.T) {
 	link.ActionRequestDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	if _, err := submitted.MarkSubmittedToGuard(link); !errors.Is(err, ErrIdempotencyKeyConflict) {
 		t.Fatalf("expected mismatched response correlation to fail, got %v", err)
+	}
+}
+
+func TestCommitRejectsConfirmationForDifferentActionRequest(t *testing.T) {
+	prepared, err := testProposal(t).Prepare(11, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conditions := CommitConditions{
+		CurrentIntentRevision:   11,
+		IntentComplete:          true,
+		CapabilityAllowed:       true,
+		RuntimeAdmissionAllowed: true,
+		Confirmation:            testConfirmation("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+		GuardSubmissionKey:      "guard-key-1",
+		ActionRequestDigest:     testDigest,
+	}
+	if _, err := prepared.AuthorizeCommit(conditions); !errors.Is(err, ErrCommitNotAuthorized) {
+		t.Fatalf("expected confirmation digest mismatch to deny commit, got %v", err)
+	}
+}
+
+func TestIrreversibleWriteRequiresConfirmationOrApproval(t *testing.T) {
+	policy := testPolicy()
+	policy.EffectClass = EffectIrreversibleWrite
+	policy.RequiresConfirmation = false
+	policy.RequiresApproval = false
+	policy.ApprovalPolicyRef = ""
+	if err := policy.Validate(); !errors.Is(err, ErrInvalidProposal) {
+		t.Fatalf("expected unguarded irreversible write to fail, got %v", err)
+	}
+	policy.RequiresApproval = true
+	policy.ApprovalPolicyRef = "policy://payments/critical/v1"
+	if err := policy.Validate(); err != nil {
+		t.Fatalf("expected approval-gated irreversible write to pass, got %v", err)
 	}
 }

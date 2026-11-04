@@ -61,8 +61,9 @@ func (p ToolPolicy) Validate() error {
 			return fmt.Errorf("%w: reversible write requires a compensation capability", ErrInvalidProposal)
 		}
 	case EffectIrreversibleWrite:
-		// Irreversible effects are permitted only through their explicit trusted
-		// policy; this model does not infer that a compensator exists.
+		if !p.RequiresConfirmation && !p.RequiresApproval {
+			return fmt.Errorf("%w: irreversible writes require confirmation or approval", ErrInvalidProposal)
+		}
 	default:
 		return fmt.Errorf("%w: unknown effect class %q", ErrInvalidProposal, p.EffectClass)
 	}
@@ -105,10 +106,12 @@ type Proposal struct {
 	ArgumentsDigest     string
 	ActionRequestDigest string
 	ToolPolicy          ToolPolicy
-	State               ProposalState
-	Version             int64
-	GuardSubmissionKey  string
-	GuardOperationID    string
+	State                ProposalState
+	Version              int64
+	GuardSubmissionKey   string
+	GuardOperationID     string
+	ConfirmationActorID  string
+	ConfirmationRef      string
 }
 
 func NewProposal(input ProposalInput) (Proposal, error) {
@@ -201,12 +204,18 @@ func (p Proposal) Cancel() (Proposal, error) {
 	return p, nil
 }
 
+type UserConfirmation struct {
+	ActorID             string
+	EvidenceRef         string
+	ActionRequestDigest string
+}
+
 type CommitConditions struct {
 	CurrentIntentRevision   int64
 	IntentComplete          bool
 	CapabilityAllowed       bool
 	RuntimeAdmissionAllowed bool
-	UserConfirmed           bool
+	Confirmation            *UserConfirmation
 	GuardSubmissionKey      string
 	ActionRequestDigest     string
 }
@@ -216,8 +225,11 @@ type CommitConditions struct {
 // Guard approval, Permit and trusted execution remain independent.
 func (p Proposal) AuthorizeCommit(conditions CommitConditions) (Proposal, error) {
 	if p.State == ProposalCommitAuthorized || p.State == ProposalSubmittedToGuard {
+		actorID, evidenceRef := confirmationIdentity(conditions.Confirmation)
 		if conditions.GuardSubmissionKey != p.GuardSubmissionKey ||
-			conditions.ActionRequestDigest != p.ActionRequestDigest {
+			conditions.ActionRequestDigest != p.ActionRequestDigest ||
+			actorID != p.ConfirmationActorID ||
+			evidenceRef != p.ConfirmationRef {
 			return Proposal{}, ErrIdempotencyKeyConflict
 		}
 		return p, nil
@@ -230,8 +242,7 @@ func (p Proposal) AuthorizeCommit(conditions CommitConditions) (Proposal, error)
 	}
 	if !conditions.IntentComplete ||
 		!conditions.CapabilityAllowed ||
-		!conditions.RuntimeAdmissionAllowed ||
-		(p.ToolPolicy.RequiresConfirmation && !conditions.UserConfirmed) {
+		!conditions.RuntimeAdmissionAllowed {
 		return Proposal{}, ErrCommitNotAuthorized
 	}
 	if err := validateIdentifier("guardSubmissionKey", conditions.GuardSubmissionKey); err != nil {
@@ -243,8 +254,22 @@ func (p Proposal) AuthorizeCommit(conditions CommitConditions) (Proposal, error)
 	if conditions.ActionRequestDigest != p.ActionRequestDigest {
 		return Proposal{}, ErrIdempotencyKeyConflict
 	}
+	if conditions.Confirmation != nil {
+		if err := validateIdentifier("confirmationActorID", conditions.Confirmation.ActorID); err != nil {
+			return Proposal{}, ErrCommitNotAuthorized
+		}
+		if err := validateIdentifier("confirmationEvidenceRef", conditions.Confirmation.EvidenceRef); err != nil {
+			return Proposal{}, ErrCommitNotAuthorized
+		}
+		if conditions.Confirmation.ActionRequestDigest != p.ActionRequestDigest {
+			return Proposal{}, ErrCommitNotAuthorized
+		}
+	} else if p.ToolPolicy.RequiresConfirmation {
+		return Proposal{}, ErrCommitNotAuthorized
+	}
 
 	p.GuardSubmissionKey = conditions.GuardSubmissionKey
+	p.ConfirmationActorID, p.ConfirmationRef = confirmationIdentity(conditions.Confirmation)
 	p.State = ProposalCommitAuthorized
 	p.Version++
 	return p, nil
@@ -291,6 +316,13 @@ func (p Proposal) MarkSubmittedToGuard(link GuardOperationLink) (Proposal, error
 	p.State = ProposalSubmittedToGuard
 	p.Version++
 	return p, nil
+}
+
+func confirmationIdentity(confirmation *UserConfirmation) (string, string) {
+	if confirmation == nil {
+		return "", ""
+	}
+	return confirmation.ActorID, confirmation.EvidenceRef
 }
 
 func validateIdentifier(name, value string) error {

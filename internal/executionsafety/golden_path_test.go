@@ -171,7 +171,7 @@ func TestAlicePermissionCorrectionGoldenPath(t *testing.T) {
 		IntentComplete:          true,
 		CapabilityAllowed:       true,
 		RuntimeAdmissionAllowed: true,
-		UserConfirmed:           true,
+		Confirmation:            permissionConfirmation("read_only"),
 		GuardSubmissionKey:      "gsk-alice-readonly-1",
 		ActionRequestDigest:     permissionRequestDigest("read_only"),
 	})
@@ -179,6 +179,7 @@ func TestAlicePermissionCorrectionGoldenPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence = append(evidence, "commit-authorized:"+readOnlyProposal.ID)
+	evidence = append(evidence, "user-confirmation:"+readOnlyProposal.ConfirmationRef)
 
 	// First submission creates a Guard-owned operation; replay returns the same one.
 	op, err := guard.Ensure(readOnlyProposal, "read_only")
@@ -245,6 +246,7 @@ func TestAlicePermissionCorrectionGoldenPath(t *testing.T) {
 	for _, required := range []string{
 		"proposal-superseded:proposal-admin",
 		"commit-authorized:proposal-readonly",
+		"user-confirmation:evidence://confirmations/alice/read_only",
 		"guard-operation-linked:" + op.id,
 		"approval:approval-record-2026-11-04",
 		"receipt-linked:" + receipt,
@@ -266,7 +268,7 @@ func TestGuardSubmissionRejectsSameKeyWithChangedDigest(t *testing.T) {
 	}
 	committed, err := prepared.AuthorizeCommit(CommitConditions{
 		CurrentIntentRevision:   12, IntentComplete: true, CapabilityAllowed: true,
-		RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "gsk-one",
+		RuntimeAdmissionAllowed: true, Confirmation: permissionConfirmation("read_only"), GuardSubmissionKey: "gsk-one",
 		ActionRequestDigest:     permissionRequestDigest("read_only"),
 	})
 	if err != nil {
@@ -282,14 +284,23 @@ func TestGuardSubmissionRejectsSameKeyWithChangedDigest(t *testing.T) {
 	}
 	changedCommitted, err := changedPrepared.AuthorizeCommit(CommitConditions{
 		CurrentIntentRevision:   12, IntentComplete: true, CapabilityAllowed: true,
-		RuntimeAdmissionAllowed: true, UserConfirmed: true, GuardSubmissionKey: "gsk-one",
+		RuntimeAdmissionAllowed: true, Confirmation: permissionConfirmation("read_only"), GuardSubmissionKey: "gsk-one",
 		ActionRequestDigest:     permissionRequestDigest("administrator"),
+		Confirmation:            permissionConfirmation("administrator"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := guard.Ensure(changedCommitted, "administrator"); err == nil {
 		t.Fatal("same Guard key accepted a changed ActionRequest digest")
+	}
+}
+
+func permissionConfirmation(role string) *UserConfirmation {
+	return &UserConfirmation{
+		ActorID:             "user-alice",
+		EvidenceRef:         "evidence://confirmations/alice/" + role,
+		ActionRequestDigest: permissionRequestDigest(role),
 	}
 }
 

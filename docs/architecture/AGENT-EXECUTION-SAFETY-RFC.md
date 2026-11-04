@@ -73,7 +73,7 @@ Prepare is a side-effect-free Runtime admission stage. It verifies at least:
 - arguments validate against the immutable argument-schema digest;
 - the trusted capability policy and policy revision are available;
 - Runtime admission authorization succeeds;
-- any required user confirmation is collected before Commit.
+- any required user confirmation is collected before Commit and is bound to the exact canonical ActionRequest digest, authenticated actor and immutable confirmation Evidence reference.
 
 Prepare may perform read-only lookups and speculative computation. It must not dispatch a protected write.
 
@@ -125,7 +125,7 @@ Validation rules:
 - A reversible write must identify a registered compensation capability.
 - A capability requiring approval must identify an immutable approval-policy reference.
 - Read-only capabilities must not declare a write compensation.
-- Irreversible writes must explicitly declare their risk and confirmation/approval policy.
+- Irreversible writes must require at least one of explicit confirmation or authoritative approval; the confirmation must bind the exact ActionRequest digest and authenticated actor.
 - Missing, unknown, stale or mismatched annotations fail closed.
 - Annotation values provided by the plugin or user never override trusted bundle/registry metadata.
 
