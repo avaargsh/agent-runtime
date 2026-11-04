@@ -212,3 +212,54 @@ func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 		t.Fatalf("Decision client calls = %d, want 1", client.calls)
 	}
 }
+
+type stopAwareBreakerStore struct {
+	record      breaker.Record
+	pollStarted chan struct{}
+	calls       int
+}
+
+func (s *stopAwareBreakerStore) GetRunBreaker(ctx context.Context, tenantID, runID string) (breaker.Record, error) {
+	s.calls++
+	if s.calls == 1 {
+		return s.record, nil
+	}
+	close(s.pollStarted)
+	<-ctx.Done()
+	return breaker.Record{}, ctx.Err()
+}
+
+type waitForPollInvoker struct {
+	pollStarted <-chan struct{}
+}
+
+func (i waitForPollInvoker) Invoke(_ context.Context, turn decision.Turn) (decision.Result, error) {
+	<-i.pollStarted
+	return decision.Result{
+		ProtocolVersion: turn.ProtocolVersion,
+		InvocationID:    turn.InvocationID,
+		Kind:            "final_response",
+		Text:            "completed before watcher shutdown",
+	}, nil
+}
+
+func TestInvokeDecisionIgnoresWatcherQueryCancelledByNormalCompletion(t *testing.T) {
+	store := &stopAwareBreakerStore{
+		record:      closedRunBreaker(t),
+		pollStarted: make(chan struct{}),
+	}
+	activity := Activities{
+		Client:       waitForPollInvoker{pollStarted: store.pollStarted},
+		Breakers:     store,
+		PollInterval: time.Millisecond,
+	}
+
+	result, err := activity.InvokeDecision(context.Background(), activityTurn())
+	if err != nil {
+		t.Fatalf("normal completion was converted into breaker failure: %v", err)
+	}
+	if result.Text != "completed before watcher shutdown" {
+		t.Fatalf("result text = %q", result.Text)
+	}
+}
+
