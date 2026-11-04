@@ -12,6 +12,7 @@ import (
 
 	"github.com/avaargsh/agent-runtime/internal/breaker"
 	"github.com/avaargsh/agent-runtime/internal/decision"
+	"github.com/avaargsh/agent-runtime/internal/dataprotection"
 	"github.com/avaargsh/agent-runtime/internal/workflows"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -37,6 +38,16 @@ func (s *requestGatedBreakerStore) GetRunBreaker(ctx context.Context, _, _ strin
 	default:
 		return s.closed, nil
 	}
+}
+
+type testDecisionProtector struct{}
+
+func (testDecisionProtector) ProtectOutbound(_ context.Context, _ dataprotection.Scope, _ string, payload []byte) ([]byte, error) {
+	return append([]byte(nil), payload...), nil
+}
+
+func (testDecisionProtector) RestoreInbound(_ context.Context, _ dataprotection.Scope, _, _ string, payload []byte) ([]byte, error) {
+	return append([]byte(nil), payload...), nil
 }
 
 func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
@@ -76,6 +87,7 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 	activity := &Activities{
 		Client: decision.Client{
 			Endpoint: server.URL,
+			Protector: testDecisionProtector{},
 			HTTP:     &http.Client{Timeout: 5 * time.Second, Transport: server.Client().Transport},
 		},
 		Breakers:     store,
