@@ -3,8 +3,8 @@ package postgres_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/avaargsh/agent-runtime/internal/executionsafety"
@@ -33,9 +33,9 @@ func executionPolicy(role string) executionsafety.ToolPolicy {
 
 func executionProposal(t *testing.T, id string, revision int64, role string) executionsafety.Proposal {
 	t.Helper()
-	requestDigest := strings.Replace(executionTestDigest, "a", "b", 1)
+	requestDigest := strings.Replace(executionTestDigest, "aaaa", "baaa", 1)
 	if role == "administrator" {
-		requestDigest = strings.Replace(executionTestDigest, "a", "c", 1)
+		requestDigest = strings.Replace(executionTestDigest, "aaaa", "caaa", 1)
 	}
 	proposal, err := executionsafety.NewProposal(executionsafety.ProposalInput{
 		ID:                  id,
@@ -94,7 +94,7 @@ func TestProposalPersistenceAliceCorrectionCommitAndEvidence(t *testing.T) {
 
 	correctedIntent := executionsafety.IntentRevision{
 		TenantID: executionTenant, RunID: executionRun, TurnID: executionTurn,
-		Revision: 12, Digest: strings.Replace(executionTestDigest, "a", "d", 1), Complete: false,
+		Revision: 12, Digest: strings.Replace(executionTestDigest, "aaaa", "daaa", 1), Complete: false,
 	}
 	if err := store.AdvanceIntentRevision(ctx, correctedIntent); err != nil {
 		t.Fatalf("advance corrected intent: %v", err)
@@ -148,9 +148,9 @@ func TestProposalPersistenceAliceCorrectionCommitAndEvidence(t *testing.T) {
 
 	link := executionsafety.GuardOperationLink{
 		TenantID: executionTenant, ProposalID: readOnly.ID,
-		GuardSubmissionKey: committed.GuardSubmissionKey,
+		GuardSubmissionKey:  committed.GuardSubmissionKey,
 		ActionRequestDigest: committed.ActionRequestDigest,
-		OperationID: "guard-operation-alice-readonly",
+		OperationID:         "guard-operation-alice-readonly",
 	}
 	submitted, err := store.LinkGuardOperation(ctx, executionTenant, readOnly.ID, committed.Version, link)
 	if err != nil {
@@ -227,7 +227,7 @@ func TestProposalCommitCannotWinAfterIntentCorrection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	newDigest := strings.Replace(executionTestDigest, "a", "e", 1)
+	newDigest := strings.Replace(executionTestDigest, "aaaa", "eaaa", 1)
 	if err := store.AdvanceIntentRevision(ctx, executionsafety.IntentRevision{
 		TenantID: executionTenant, RunID: executionRun, TurnID: executionTurn,
 		Revision: 21, Digest: newDigest, Complete: true,
@@ -313,7 +313,7 @@ func TestGuardOperationLinkRejectsCrossProposalOrDigestBinding(t *testing.T) {
 		TenantID: executionTenant, ProposalID: proposal.ID,
 		GuardSubmissionKey: committed.GuardSubmissionKey,
 		ActionRequestDigest: strings.Replace(committed.ActionRequestDigest, "b", "c", 1),
-		OperationID: "guard-operation-wrong-digest",
+		OperationID:         "guard-operation-wrong-digest",
 	}
 	if _, err := store.LinkGuardOperation(ctx, executionTenant, proposal.ID, committed.Version, mismatch); !errors.Is(err, executionsafety.ErrIdempotencyKeyConflict) {
 		t.Fatalf("mismatched Guard response advanced proposal: %v", err)
@@ -354,7 +354,7 @@ func TestConcurrentIntentAdvanceAndProposalCommitHasOneSafeOutcome(t *testing.T)
 		<-start
 		errs <- store.AdvanceIntentRevision(ctx, executionsafety.IntentRevision{
 			TenantID: executionTenant, RunID: executionRun, TurnID: executionTurn,
-			Revision: 32, Digest: strings.Replace(executionTestDigest, "a", "f", 1), Complete: true,
+			Revision: 32, Digest: strings.Replace(executionTestDigest, "aaaa", "faaa", 1), Complete: true,
 		})
 	}()
 	close(start)
