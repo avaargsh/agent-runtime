@@ -60,8 +60,8 @@ func TestRecoveryRequiresApprovalAndReadOnlyHalfOpenProbe(t *testing.T) {
 	closed, _ := NewClosed(runScope(), now)
 	opened, _ := closed.Trip("POLICY_BYPASS", "event-001", now.Add(time.Second))
 
-	if got, err := opened.BeginRecovery("", now.Add(2*time.Second)); err == nil || got.State != StateOpen {
-		t.Fatalf("BeginRecovery(empty) = %+v, %v; want rejection", got, err)
+	if got, err := opened.BeginRecovery("", now.Add(2*time.Second)); err == nil || got.State != "" || opened.State != StateOpen {
+		t.Fatalf("BeginRecovery(empty) = %+v, %v; want rejection without mutating OPEN record", got, err)
 	}
 
 	halfOpen, err := opened.BeginRecovery("approval-001", now.Add(3*time.Second))
