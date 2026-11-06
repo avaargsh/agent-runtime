@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/avaargsh/agent-runtime/internal/harness/acp"
@@ -71,5 +72,61 @@ func TestHarnessClaimIgnoresPgTempShadowAndUpdatesPermanentRelation(t *testing.T
 	}
 	if permanentState != string(acp.ClaimConfirmed) {
 		t.Fatalf("confirmation bypassed permanent claim row: %q", permanentState)
+	}
+}
+
+func TestHarnessClaimRejectsPgTempShadowedRunAuthority(t *testing.T) {
+	pool, _, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs SET status='CANCELLED', updated_at=now()
+		WHERE tenant_id=$1 AND run_id=$2::uuid
+	`, claim.TenantID, claim.RunID); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pool.Config()
+	cfg.MaxConns = 1
+	shadowPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shadowPool.Close()
+	// The fake Run is RUNNING while the authoritative permanent Run is
+	// CANCELLED; an unqualified FROM runs can incorrectly grant a claim.
+	if _, err := shadowPool.Exec(ctx, `
+		CREATE TEMP TABLE runs AS TABLE runs;
+		UPDATE runs SET status='RUNNING'
+	`); err != nil {
+		t.Fatalf("create temp Run authority shadow: %v", err)
+	}
+
+	if record, err := postgres.New(shadowPool).ClaimHarnessSession(ctx, claim); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("cancelled Run created a claim through pg_temp authority: %+v %v", record, err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM runtime_harness_session_claims
+		WHERE tenant_id=$1 AND run_id=$2::uuid
+	`, claim.TenantID, claim.RunID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("claim created for cancelled authoritative Run: %d", count)
+	}
+}
+
+func TestHarnessClaimRejectsAmbiguousStartupSearchPath(t *testing.T) {
+	pool, _, claim := harnessFixture(t)
+	cfg := pool.Config()
+	cfg.ConnConfig.RuntimeParams["search_path"] = "pg_temp,public"
+	badPool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer badPool.Close()
+	record, err := postgres.New(badPool).ClaimHarnessSession(context.Background(), claim)
+	if !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("ambiguous configured schema accepted: %+v %v", record, err)
 	}
 }
