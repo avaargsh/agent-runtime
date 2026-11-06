@@ -1,0 +1,278 @@
+package postgres_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/avaargsh/agent-runtime/internal/harness/acp"
+	"github.com/avaargsh/agent-runtime/internal/store/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func harnessFixture(t *testing.T) (*pgxpool.Pool, *postgres.Store, acp.SessionClaim) {
+	t.Helper()
+	pool, store := newTestStore(t)
+	receipt, err := store.AcceptIntent(context.Background(), testIntent())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(),
+		"UPDATE runs SET status='RUNNING', updated_at=now() WHERE tenant_id=$1 AND run_id=$2::uuid",
+		"tenant-1", receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
+	return pool, store, acp.SessionClaim{
+		TenantID: "tenant-1", RunID: receipt.RunID,
+		AttemptID:         "22222222-2222-4222-8222-222222222222",
+		HarnessInstanceID: "worker-codex-1", AgentReleaseID: "release-1",
+		PolicyRevision: "policy-rev-1", RequestDigest: "sha256:" + strings.Repeat("a", 64),
+		WorkingDir: "/workspace/project",
+	}
+}
+
+func TestHarnessSessionClaimConcurrentSingleDispatch(t *testing.T) {
+	_, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	const workers = 12
+	type outcome struct {
+		record acp.SessionClaimRecord
+		err    error
+	}
+	results := make(chan outcome, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec, err := store.ClaimHarnessSession(ctx, claim)
+			results <- outcome{rec, err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	created := 0
+	for result := range results {
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.record.State != acp.ClaimPrepared {
+			t.Fatalf("unexpected claim state: %+v", result.record)
+		}
+		if result.record.Created {
+			created++
+		}
+	}
+	if created != 1 {
+		t.Fatalf("created %d claims, want 1", created)
+	}
+	dispatch := make(chan bool, workers)
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, err := store.BeginHarnessSessionDispatch(ctx, claim)
+			dispatch <- ok
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(dispatch)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := 0
+	for ok := range dispatch {
+		if ok {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("dispatch grants = %d, want 1", count)
+	}
+	got, err := store.ReadHarnessSessionClaim(ctx, claim)
+	if err != nil || got.State != acp.ClaimUnknown || got.AgentSessionID != "" {
+		t.Fatalf("dispatch must persist uncertainty: %+v %v", got, err)
+	}
+}
+
+func TestHarnessClaimLostACKAndStoreRestartNeverReauthorizesDispatch(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	first, err := store.ClaimHarnessSession(ctx, claim)
+	if err != nil || !first.Created {
+		t.Fatalf("claim: %+v %v", first, err)
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok {
+		t.Fatalf("begin: %t %v", ok, err)
+	}
+	// The handler never receives session/new's ACK. Recreated store has only
+	// PostgreSQL evidence; it must not issue another dispatch grant.
+	again := postgres.New(pool)
+	second, err := again.ClaimHarnessSession(ctx, claim)
+	if err != nil || second.State != acp.ClaimUnknown || second.Created {
+		t.Fatalf("lost-ACK replay: %+v %v", second, err)
+	}
+	if ok, err := again.BeginHarnessSessionDispatch(ctx, claim); err != nil || ok {
+		t.Fatalf("unknown dispatch retried: %t %v", ok, err)
+	}
+}
+
+func TestHarnessClaimChangedBindingsAndMissingAuthorityFailClosed(t *testing.T) {
+	_, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	variants := []struct {
+		name   string
+		change func(*acp.SessionClaim)
+	}{
+		{"attempt", func(c *acp.SessionClaim) { c.AttemptID = "33333333-3333-4333-8333-333333333333" }},
+		{"harness", func(c *acp.SessionClaim) { c.HarnessInstanceID = "worker-claude-2" }},
+		{"release", func(c *acp.SessionClaim) { c.AgentReleaseID = "release-2" }},
+		{"policy", func(c *acp.SessionClaim) { c.PolicyRevision = "policy-rev-2" }},
+		{"digest", func(c *acp.SessionClaim) { c.RequestDigest = "sha256:" + strings.Repeat("b", 64) }},
+		{"cwd", func(c *acp.SessionClaim) { c.WorkingDir = "/other-dir" }},
+		{"tenant", func(c *acp.SessionClaim) { c.TenantID = "tenant-2" }},
+	}
+	for _, tc := range variants {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := claim
+			tc.change(&mutated)
+			if _, err := store.ClaimHarnessSession(ctx, mutated); !errors.Is(err, acp.ErrBindingInvalid) && !errors.Is(err, acp.ErrClaimConflict) {
+				t.Fatalf("changed claim accepted: %v", err)
+			}
+			if ok, err := store.BeginHarnessSessionDispatch(ctx, mutated); err == nil || ok {
+				t.Fatalf("changed dispatch accepted: %t %v", ok, err)
+			}
+		})
+	}
+	unbound := claim
+	unbound.RunID = "44444444-4444-4444-8444-444444444444"
+	if _, err := store.ClaimHarnessSession(ctx, unbound); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("missing canonical Run accepted: %v", err)
+	}
+}
+
+func TestHarnessClaimConfirmIsIdempotentAndConflictsOnDifferentSession(t *testing.T) {
+	_, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok {
+		t.Fatalf("dispatch: %t %v", ok, err)
+	}
+	first, err := store.ConfirmHarnessSession(ctx, claim, "agent-session-1")
+	if err != nil || first.State != acp.ClaimConfirmed || first.AgentSessionID != "agent-session-1" {
+		t.Fatalf("confirm: %+v %v", first, err)
+	}
+	second, err := store.ConfirmHarnessSession(ctx, claim, "agent-session-1")
+	if err != nil || second.AgentSessionID != first.AgentSessionID {
+		t.Fatalf("replay changed session: %+v %v", second, err)
+	}
+	if _, err := store.ConfirmHarnessSession(ctx, claim, "agent-session-2"); !errors.Is(err, acp.ErrClaimConflict) {
+		t.Fatalf("changed session was accepted: %v", err)
+	}
+}
+
+func TestHarnessClaimMustDispatchBeforeConfirmAndValidateRequest(t *testing.T) {
+	_, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ConfirmHarnessSession(ctx, claim, "agent-session-1"); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("premature confirm: %v", err)
+	}
+	if _, err := store.ConfirmHarnessSession(ctx, claim, " "); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("malformed session accepted: %v", err)
+	}
+	if _, err := store.ClaimHarnessSession(ctx, acp.SessionClaim{TenantID: "tenant-1"}); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("malformed claim accepted: %v", err)
+	}
+}
+
+func TestHarnessClaimRequiresCanonicalRunIntentDigestAndRelease(t *testing.T) {
+	_, store, claim := harnessFixture(t)
+	wrongDigest := claim
+	wrongDigest.RequestDigest = "sha256:" + strings.Repeat("b", 64)
+	if _, err := store.ClaimHarnessSession(context.Background(), wrongDigest); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("digest not bound to canonical RunIntent: %v", err)
+	}
+	wrongRelease := claim
+	wrongRelease.AgentReleaseID = "release-2"
+	if _, err := store.ClaimHarnessSession(context.Background(), wrongRelease); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("AgentRelease not bound to canonical Run: %v", err)
+	}
+}
+
+func TestHarnessClaimRejectsDispatchAfterRunCancellation(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE runs SET status='CANCELLED', updated_at=now() WHERE tenant_id=$1 AND run_id=$2::uuid", claim.TenantID, claim.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); ok || !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("cancelled Run granted session dispatch: %t %v", ok, err)
+	}
+	record, err := store.ReadHarnessSessionClaim(ctx, claim)
+	if err != nil || record.State != acp.ClaimPrepared {
+		t.Fatalf("failed admission mutated claim: %+v %v", record, err)
+	}
+}
+
+func TestHarnessClaimDatabaseForbidsIdentityMutationDeletionTruncateAndStateRegression(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"UPDATE runtime_harness_session_claims SET attempt_id='55555555-5555-4555-8555-555555555555'::uuid WHERE tenant_id=$1 AND run_id=$2::uuid",
+		"UPDATE runtime_harness_session_claims SET state='CONFIRMED',agent_session_id='forged' WHERE tenant_id=$1 AND run_id=$2::uuid",
+		"DELETE FROM runtime_harness_session_claims WHERE tenant_id=$1 AND run_id=$2::uuid",
+	} {
+		if _, err := pool.Exec(ctx, statement, claim.TenantID, claim.RunID); err == nil {
+			t.Fatalf("forbidden mutation succeeded: %s", statement)
+		}
+	}
+	if _, err := pool.Exec(ctx, "TRUNCATE runtime_harness_session_claims"); err == nil {
+		t.Fatal("claim TRUNCATE succeeded")
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok {
+		t.Fatalf("dispatch: %t %v", ok, err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE runtime_harness_session_claims SET state='PREPARED' WHERE tenant_id=$1 AND run_id=$2::uuid", claim.TenantID, claim.RunID); err == nil {
+		t.Fatal("UNKNOWN state was rolled back to PREPARED")
+	}
+	record, err := store.ReadHarnessSessionClaim(ctx, claim)
+	if err != nil || record.State != acp.ClaimUnknown {
+		t.Fatalf("claim no longer UNKNOWN: %+v %v", record, err)
+	}
+}
+
+func TestHarnessClaimMigrationVersionAndReapply(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_schema_migrations WHERE version=6").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("migration v6 missing: %d %v", count, err)
+	}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("repeat migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO runtime_harness_session_claims (tenant_id, run_id) VALUES ('x', '11111111-1111-4111-8111-111111111111'::uuid)"); err == nil {
+		t.Fatal("incomplete orphaned harness claim was accepted")
+	}
+}
