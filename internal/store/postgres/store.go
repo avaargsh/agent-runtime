@@ -165,6 +165,28 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record Runtime audit TRUNCATE migration: %w", err)
 		}
 	}
+	// V6 adds the immutable ACP Harness session creation claim/UNKNOWN fence.
+	// Never rewrite already-applied schema migrations.
+	var v6Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 6)",
+	).Scan(&v6Applied); err != nil {
+		return fmt.Errorf("read Runtime Harness migration ledger: %w", err)
+	}
+	if !v6Applied {
+		script, err := migrationFiles.ReadFile("migrations/0006_runtime_harness_session_claims.up.sql")
+		if err != nil {
+			return fmt.Errorf("read Runtime Harness migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply Runtime Harness migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO runtime_schema_migrations (version) VALUES (6)",
+		); err != nil {
+			return fmt.Errorf("record Runtime Harness migration: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
