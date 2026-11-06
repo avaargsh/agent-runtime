@@ -107,8 +107,18 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DROP TRIGGER runtime_security_audit_no_truncate ON runtime_security_audit_events`); err != nil {
 		t.Fatalf("simulate original v4 schema without TRUNCATE guard: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM runtime_schema_migrations WHERE version = 5`); err != nil {
-		t.Fatalf("simulate original applied-v4 version ledger: %v", err)
+	// This fixture starts with the newest schema; rewind both the new
+	// version's objects and its ledger entry to model a genuine v4 database.
+	// Dropping only v5's ledger while leaving v6 applied is not an upgrade test.
+	for _, statement := range []string{
+		"DROP TABLE runtime_harness_session_claims",
+		"DROP FUNCTION enforce_runtime_harness_claim_transition()",
+		"DROP FUNCTION reject_runtime_harness_claim_truncate()",
+		"DELETE FROM runtime_schema_migrations WHERE version IN (5, 6)",
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("rewind to v4: %s: %v", statement, err)
+		}
 	}
 	var version int
 	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
@@ -124,8 +134,8 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 5 {
-		t.Fatalf("migration version after upgrade = %d, want 5", version)
+	if version != 6 {
+		t.Fatalf("migration version after upgrade = %d, want 6", version)
 	}
 	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
 		t.Fatal("previously applied v4 database still permits audit TRUNCATE")
