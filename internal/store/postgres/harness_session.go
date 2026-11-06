@@ -32,7 +32,8 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 		SELECT $1, r.run_id, $3::uuid, $4, $5, $6, $7, $8, 'PREPARED'
 		FROM runs AS r
 		WHERE r.tenant_id = $1 AND r.run_id = $2::uuid
-			AND r.agent_release_id = $5 AND r.status = 'RUNNING'
+			AND r.agent_release_id = $5 AND r.source_request_digest = $7
+			AND r.status = 'RUNNING'
 		ON CONFLICT (tenant_id, run_id) DO NOTHING
 		RETURNING run_id::text
 	`, claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
@@ -112,7 +113,7 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 			AND c.state='PREPARED'
 			AND EXISTS (SELECT 1 FROM runs r WHERE r.tenant_id=c.tenant_id
 				AND r.run_id=c.run_id AND r.agent_release_id=c.agent_release_id
-				AND r.status='RUNNING')
+				AND r.source_request_digest=c.request_digest AND r.status='RUNNING')
 		RETURNING c.run_id::text
 	`, claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&runID)
