@@ -188,6 +188,68 @@ func TestHarnessClaimMustDispatchBeforeConfirmAndValidateRequest(t *testing.T) {
 	}
 }
 
+func TestHarnessClaimRequiresCanonicalRunIntentDigestAndRelease(t *testing.T) {
+	_, store, claim := harnessFixture(t)
+	wrongDigest := claim
+	wrongDigest.RequestDigest = "sha256:" + strings.Repeat("b", 64)
+	if _, err := store.ClaimHarnessSession(context.Background(), wrongDigest); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("digest not bound to canonical RunIntent: %v", err)
+	}
+	wrongRelease := claim
+	wrongRelease.AgentReleaseID = "release-2"
+	if _, err := store.ClaimHarnessSession(context.Background(), wrongRelease); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("AgentRelease not bound to canonical Run: %v", err)
+	}
+}
+
+func TestHarnessClaimRejectsDispatchAfterRunCancellation(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE runs SET status='CANCELLED', updated_at=now() WHERE tenant_id=$1 AND run_id=$2::uuid", claim.TenantID, claim.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); ok || !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("cancelled Run granted session dispatch: %t %v", ok, err)
+	}
+	record, err := store.ReadHarnessSessionClaim(ctx, claim)
+	if err != nil || record.State != acp.ClaimPrepared {
+		t.Fatalf("failed admission mutated claim: %+v %v", record, err)
+	}
+}
+
+func TestHarnessClaimDatabaseForbidsIdentityMutationDeletionTruncateAndStateRegression(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"UPDATE runtime_harness_session_claims SET attempt_id='55555555-5555-4555-8555-555555555555'::uuid WHERE tenant_id=$1 AND run_id=$2::uuid",
+		"UPDATE runtime_harness_session_claims SET state='CONFIRMED',agent_session_id='forged' WHERE tenant_id=$1 AND run_id=$2::uuid",
+		"DELETE FROM runtime_harness_session_claims WHERE tenant_id=$1 AND run_id=$2::uuid",
+	} {
+		if _, err := pool.Exec(ctx, statement, claim.TenantID, claim.RunID); err == nil {
+			t.Fatalf("forbidden mutation succeeded: %s", statement)
+		}
+	}
+	if _, err := pool.Exec(ctx, "TRUNCATE runtime_harness_session_claims"); err == nil {
+		t.Fatal("claim TRUNCATE succeeded")
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok {
+		t.Fatalf("dispatch: %t %v", ok, err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE runtime_harness_session_claims SET state='PREPARED' WHERE tenant_id=$1 AND run_id=$2::uuid", claim.TenantID, claim.RunID); err == nil {
+		t.Fatal("UNKNOWN state was rolled back to PREPARED")
+	}
+	record, err := store.ReadHarnessSessionClaim(ctx, claim)
+	if err != nil || record.State != acp.ClaimUnknown {
+		t.Fatalf("claim no longer UNKNOWN: %+v %v", record, err)
+	}
+}
+
 func TestHarnessClaimMigrationVersionAndReapply(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
