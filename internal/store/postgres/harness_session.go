@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/avaargsh/agent-runtime/internal/harness/acp"
 	"github.com/avaargsh/agent-runtime/internal/run"
@@ -178,6 +180,6 @@ func (s *Store) ConfirmHarnessSession(ctx context.Context, claim acp.SessionClai
 }
 
 func validAgentSessionID(v string) bool {
-	return v != "" && len(v) <= 255 && v[0] != ' ' && v[len(v)-1] != ' ' &&
-		!containsInvalidSessionRune(v)
+	return v != "" && len(v) <= 255 && strings.TrimSpace(v) == v &&
+		utf8.ValidString(v) && !strings.ContainsRune(v, '\\x00')
 }
