@@ -3,23 +3,23 @@ package postgres_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/avaargsh/agent-runtime/internal/harness/acp"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func harnessFixture(t *testing.T) (*postgres.Store, acp.SessionClaim) {
+func harnessFixture(t *testing.T) (*pgxpool.Pool, *postgres.Store, acp.SessionClaim) {
 	t.Helper()
-	_, store := newTestStore(t)
+	pool, store := newTestStore(t)
 	receipt, err := store.AcceptIntent(context.Background(), testIntent())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return store, acp.SessionClaim{
+	return pool, store, acp.SessionClaim{
 		TenantID: "tenant-1", RunID: receipt.RunID,
 		AttemptID: "22222222-2222-4222-8222-222222222222",
 		HarnessInstanceID: "worker-codex-1", AgentReleaseID: "release-1",
@@ -29,7 +29,7 @@ func harnessFixture(t *testing.T) (*postgres.Store, acp.SessionClaim) {
 }
 
 func TestHarnessSessionClaimConcurrentSingleDispatch(t *testing.T) {
-	store, claim := harnessFixture(t)
+	_, store, claim := harnessFixture(t)
 	ctx := context.Background()
 	const workers = 12
 	type outcome struct {
@@ -94,7 +94,7 @@ func TestHarnessSessionClaimConcurrentSingleDispatch(t *testing.T) {
 }
 
 func TestHarnessClaimLostACKAndStoreRestartNeverReauthorizesDispatch(t *testing.T) {
-	store, claim := harnessFixture(t)
+	pool, store, claim := harnessFixture(t)
 	ctx := context.Background()
 	first, err := store.ClaimHarnessSession(ctx, claim)
 	if err != nil || !first.Created {
@@ -105,7 +105,7 @@ func TestHarnessClaimLostACKAndStoreRestartNeverReauthorizesDispatch(t *testing.
 	}
 	// The handler never receives session/new's ACK. Recreated store has only
 	// PostgreSQL evidence; it must not issue another dispatch grant.
-	again := postgres.New(store.PoolForTestOnly()) // intentionally unavailable until implementation
+	again := postgres.New(pool)
 	second, err := again.ClaimHarnessSession(ctx, claim)
 	if err != nil || second.State != acp.ClaimUnknown || second.Created {
 		t.Fatalf("lost-ACK replay: %+v %v", second, err)
@@ -116,7 +116,7 @@ func TestHarnessClaimLostACKAndStoreRestartNeverReauthorizesDispatch(t *testing.
 }
 
 func TestHarnessClaimChangedBindingsAndMissingAuthorityFailClosed(t *testing.T) {
-	store, claim := harnessFixture(t)
+	_, store, claim := harnessFixture(t)
 	ctx := context.Background()
 	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil { t.Fatal(err) }
 	variants := []struct {
@@ -151,7 +151,7 @@ func TestHarnessClaimChangedBindingsAndMissingAuthorityFailClosed(t *testing.T) 
 }
 
 func TestHarnessClaimConfirmIsIdempotentAndConflictsOnDifferentSession(t *testing.T) {
-	store, claim := harnessFixture(t)
+	_, store, claim := harnessFixture(t)
 	ctx := context.Background()
 	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil { t.Fatal(err) }
 	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok { t.Fatalf("dispatch: %t %v", ok, err) }
@@ -169,7 +169,7 @@ func TestHarnessClaimConfirmIsIdempotentAndConflictsOnDifferentSession(t *testin
 }
 
 func TestHarnessClaimMustDispatchBeforeConfirmAndValidateRequest(t *testing.T) {
-	store, claim := harnessFixture(t)
+	_, store, claim := harnessFixture(t)
 	ctx := context.Background()
 	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil { t.Fatal(err) }
 	if _, err := store.ConfirmHarnessSession(ctx, claim, "agent-session-1"); !errors.Is(err, acp.ErrBindingInvalid) {
@@ -196,5 +196,4 @@ func TestHarnessClaimMigrationVersionAndReapply(t *testing.T) {
 	if _, err := pool.Exec(ctx, "INSERT INTO runtime_harness_session_claims (tenant_id, run_id) VALUES ('x', '11111111-1111-4111-8111-111111111111'::uuid)"); err == nil {
 		t.Fatal("incomplete orphaned harness claim was accepted")
 	}
-	_ = fmt.Sprintf
 }
