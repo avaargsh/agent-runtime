@@ -19,6 +19,11 @@ func harnessFixture(t *testing.T) (*pgxpool.Pool, *postgres.Store, acp.SessionCl
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(context.Background(),
+		"UPDATE runs SET status='RUNNING', updated_at=now() WHERE tenant_id=$1 AND run_id=$2::uuid",
+		"tenant-1", receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
 	return pool, store, acp.SessionClaim{
 		TenantID: "tenant-1", RunID: receipt.RunID,
 		AttemptID: "22222222-2222-4222-8222-222222222222",
