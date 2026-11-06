@@ -26,7 +26,7 @@ func harnessFixture(t *testing.T) (*pgxpool.Pool, *postgres.Store, acp.SessionCl
 	}
 	return pool, store, acp.SessionClaim{
 		TenantID: "tenant-1", RunID: receipt.RunID,
-		AttemptID: "22222222-2222-4222-8222-222222222222",
+		AttemptID:         "22222222-2222-4222-8222-222222222222",
 		HarnessInstanceID: "worker-codex-1", AgentReleaseID: "release-1",
 		PolicyRevision: "policy-rev-1", RequestDigest: "sha256:" + strings.Repeat("a", 64),
 		WorkingDir: "/workspace/project",
@@ -39,7 +39,7 @@ func TestHarnessSessionClaimConcurrentSingleDispatch(t *testing.T) {
 	const workers = 12
 	type outcome struct {
 		record acp.SessionClaimRecord
-		err error
+		err    error
 	}
 	results := make(chan outcome, workers)
 	var wg sync.WaitGroup
@@ -83,11 +83,15 @@ func TestHarnessSessionClaimConcurrentSingleDispatch(t *testing.T) {
 	close(dispatch)
 	close(errs)
 	for err := range errs {
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	count := 0
 	for ok := range dispatch {
-		if ok { count++ }
+		if ok {
+			count++
+		}
 	}
 	if count != 1 {
 		t.Fatalf("dispatch grants = %d, want 1", count)
@@ -123,9 +127,11 @@ func TestHarnessClaimLostACKAndStoreRestartNeverReauthorizesDispatch(t *testing.
 func TestHarnessClaimChangedBindingsAndMissingAuthorityFailClosed(t *testing.T) {
 	_, store, claim := harnessFixture(t)
 	ctx := context.Background()
-	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil { t.Fatal(err) }
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
 	variants := []struct {
-		name string
+		name   string
 		change func(*acp.SessionClaim)
 	}{
 		{"attempt", func(c *acp.SessionClaim) { c.AttemptID = "33333333-3333-4333-8333-333333333333" }},
@@ -158,8 +164,12 @@ func TestHarnessClaimChangedBindingsAndMissingAuthorityFailClosed(t *testing.T) 
 func TestHarnessClaimConfirmIsIdempotentAndConflictsOnDifferentSession(t *testing.T) {
 	_, store, claim := harnessFixture(t)
 	ctx := context.Background()
-	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil { t.Fatal(err) }
-	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok { t.Fatalf("dispatch: %t %v", ok, err) }
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok {
+		t.Fatalf("dispatch: %t %v", ok, err)
+	}
 	first, err := store.ConfirmHarnessSession(ctx, claim, "agent-session-1")
 	if err != nil || first.State != acp.ClaimConfirmed || first.AgentSessionID != "agent-session-1" {
 		t.Fatalf("confirm: %+v %v", first, err)
@@ -176,7 +186,9 @@ func TestHarnessClaimConfirmIsIdempotentAndConflictsOnDifferentSession(t *testin
 func TestHarnessClaimMustDispatchBeforeConfirmAndValidateRequest(t *testing.T) {
 	_, store, claim := harnessFixture(t)
 	ctx := context.Background()
-	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil { t.Fatal(err) }
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.ConfirmHarnessSession(ctx, claim, "agent-session-1"); !errors.Is(err, acp.ErrBindingInvalid) {
 		t.Fatalf("premature confirm: %v", err)
 	}
