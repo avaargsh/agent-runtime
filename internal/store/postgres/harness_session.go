@@ -181,5 +181,5 @@ func (s *Store) ConfirmHarnessSession(ctx context.Context, claim acp.SessionClai
 
 func validAgentSessionID(v string) bool {
 	return v != "" && len(v) <= 255 && strings.TrimSpace(v) == v &&
-		utf8.ValidString(v) && !strings.ContainsRune(v, '\\x00')
+		utf8.ValidString(v) && !strings.ContainsRune(v, '\x00')
 }
