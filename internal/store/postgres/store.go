@@ -187,6 +187,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record Runtime Harness migration: %w", err)
 		}
 	}
+	// Attest the actual v6 protections even if the ledger already says
+	// applied. A disabled/replaced trigger must fail migration/startup closed.
+	if err := verifyHarnessClaimCatalog(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
