@@ -17,9 +17,9 @@ const ProtocolVersion = 1
 
 var (
 	ErrInvalidConfiguration = errors.New("ACP harness adapter requires a transport and authoritative binding store")
-	ErrNotInitialized      = errors.New("ACP v1 initialization not completed")
-	ErrUnsupportedVersion  = errors.New("unsupported Agent Client Protocol version")
-	ErrBindingInvalid      = errors.New("invalid or mismatched persisted ACP harness binding")
+	ErrNotInitialized       = errors.New("ACP v1 initialization not completed")
+	ErrUnsupportedVersion   = errors.New("unsupported Agent Client Protocol version")
+	ErrBindingInvalid       = errors.New("invalid or mismatched persisted ACP harness binding")
 )
 
 // RPC is a bidirectional ACP JSON-RPC v1 transport. It MUST deliver agent
