@@ -184,3 +184,23 @@ func TestCancelIsNotificationNotTermination(t *testing.T) {
 		t.Fatalf("got %s %v", status, err)
 	}
 }
+
+func TestNewClientRejectsTypedNilDependencies(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rpc   RPC
+		store BindingStore
+	}{
+		{"nil RPC", nil, &fakeStore{}},
+		{"typed nil RPC", (*fakeRPC)(nil), &fakeStore{}},
+		{"nil binding store", &fakeRPC{}, nil},
+		{"typed nil binding store", &fakeRPC{}, (*fakeStore)(nil)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := NewClient(tc.rpc, tc.store)
+			if client != nil || !errors.Is(err, ErrInvalidConfiguration) {
+				t.Fatalf("invalid ACP v1 dependencies accepted: client=%v err=%v", client, err)
+			}
+		})
+	}
+}
