@@ -39,10 +39,11 @@ func TestTemporalTurnIdentityIsDurableAcrossRetryAndWorkerRestart(t *testing.T) 
 	if err != nil || secondTurn.RunAttemptID != first.RunAttemptID || secondTurn.TurnID == first.TurnID {
 		t.Fatalf("new decision turn failed to retain Attempt: %+v %v", secondTurn, err)
 	}
-	newExecution, err := afterRestart.GetOrCreateTemporalTurn(ctx, r.TenantID, r.RunID, r.WorkflowID, secondTemporalExecutionID, 1)
-	if err != nil || newExecution.RunAttemptID == first.RunAttemptID ||
-		newExecution.TurnID == first.TurnID {
-		t.Fatalf("separate Temporal execution reused Attempt/Turn: %+v %v", newExecution, err)
+	// A second Temporal Server execution for the same logical Run might be
+	// a replay after history retention expiry. Without an explicit fenced
+	// continuation contract, a second Attempt could repeat effects.
+	if _, err := afterRestart.GetOrCreateTemporalTurn(ctx, r.TenantID, r.RunID, r.WorkflowID, secondTemporalExecutionID, 1); !errors.Is(err, postgres.ErrTemporalExecutionConflict) {
+		t.Fatalf("new Temporal execution bypassed UNKNOWN reconciliation: %v", err)
 	}
 	var attempts, turns int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_run_attempts WHERE run_id=$1::uuid", r.RunID).Scan(&attempts); err != nil {
@@ -51,7 +52,7 @@ func TestTemporalTurnIdentityIsDurableAcrossRetryAndWorkerRestart(t *testing.T) 
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_decision_turns WHERE run_id=$1::uuid", r.RunID).Scan(&turns); err != nil {
 		t.Fatal(err)
 	}
-	if attempts != 2 || turns != 3 {
+	if attempts != 1 || turns != 2 {
 		t.Fatalf("duplicated canonical identities: attempts=%d turns=%d", attempts, turns)
 	}
 }
