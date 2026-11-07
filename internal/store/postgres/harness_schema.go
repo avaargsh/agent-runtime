@@ -20,9 +20,9 @@ import (
 // deployments using a different schema must set one pinned startup value.
 var harnessSchemaName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
-func (s *Store) harnessRelations() (claimTable, runTable string, err error) {
+func (s *Store) harnessRelations() (claimTable, runTable, principalTable string, err error) {
 	if s == nil || s.pool == nil {
-		return "", "", fmt.Errorf("%w: PostgreSQL pool unavailable", acp.ErrBindingInvalid)
+		return "", "", "", fmt.Errorf("%w: PostgreSQL pool unavailable", acp.ErrBindingInvalid)
 	}
 	schema := s.pool.Config().ConnConfig.RuntimeParams["search_path"]
 	if schema == "" {
@@ -30,8 +30,9 @@ func (s *Store) harnessRelations() (claimTable, runTable string, err error) {
 	}
 	if !harnessSchemaName.MatchString(schema) || strings.HasPrefix(schema, "pg_") ||
 		schema == "information_schema" {
-		return "", "", fmt.Errorf("%w: untrusted or ambiguous Harness schema configuration", acp.ErrBindingInvalid)
+		return "", "", "", fmt.Errorf("%w: untrusted or ambiguous Harness schema configuration", acp.ErrBindingInvalid)
 	}
 	return pgx.Identifier{schema, "runtime_harness_session_claims"}.Sanitize(),
-		pgx.Identifier{schema, "runs"}.Sanitize(), nil
+		pgx.Identifier{schema, "runs"}.Sanitize(),
+		pgx.Identifier{schema, "runtime_run_principal_snapshots"}.Sanitize(), nil
 }
