@@ -214,3 +214,58 @@ func TestRejectsCaseInsensitiveFieldAliasAndMissingInput(t *testing.T) {
 		})
 	}
 }
+
+type principalCapturingStore struct {
+	*fakeStore
+	principal run.PrincipalSnapshot
+	calls     int
+}
+
+func (s *principalCapturingStore) AcceptIntentWithPrincipal(ctx context.Context, req run.IntentStartRequest, p run.PrincipalSnapshot) (run.IntentReceipt, error) {
+	s.calls++
+	s.principal = p
+	return s.fakeStore.AcceptIntent(ctx, req)
+}
+
+func TestV2RequiresExactPrincipalContextAndVerifiedWorkloadIssuer(t *testing.T) {
+	store := &principalCapturingStore{fakeStore: &fakeStore{}}
+	h, err := acphttp.NewHandler(store, acpID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := `"principal_context":{"version":"acp-principal/v1","project_id":"project-1","subject_id":"subject-1","actor_id":"actor-1","policy_revision":"rev-1","config_digest":"sha256:` + strings.Repeat("b", 64) + `"}`
+	valid := strings.TrimSuffix(body(), "}") + "," + principal + "}"
+	path := "/internal/v2/run-intents:accept"
+	if w := send(h, http.MethodPost, path, valid, false); w.Code != http.StatusUnauthorized {
+		t.Fatalf("spoofable header bypassed v2 workload identity: %d", w.Code)
+	}
+	if store.calls != 0 {
+		t.Fatal("unverified peer reached principal store")
+	}
+	for _, tc := range []struct {
+		name string
+		raw string
+	}{
+		{"no snapshot", body()},
+		{"forged issuer", strings.Replace(valid, `"project_id":`, `"issuer_spiffe_id":"spiffe://attacker/acp","project_id":`, 1)},
+		{"missing actor", strings.Replace(valid, `"actor_id":"actor-1",`, "", 1)},
+		{"missing policy", strings.Replace(valid, `"policy_revision":"rev-1",`, "", 1)},
+		{"nested case alias", strings.Replace(valid, `"subject_id":`, `"Subject_id":`, 1)},
+		{"duplicate subject", strings.Replace(valid, `"subject_id":"subject-1",`, `"subject_id":"subject-1","subject_id":"subject-2",`, 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := send(h, http.MethodPost, path, tc.raw, true)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("invalid context reached store: %d %s", w.Code, w.Body.String())
+			}
+		})
+	}
+	if store.calls != 0 {
+		t.Fatalf("invalid principal context mutated store %d times", store.calls)
+	}
+	w := send(h, http.MethodPost, path, valid, true)
+	if w.Code != http.StatusCreated || store.calls != 1 || store.principal.IssuerSPIFFEID != acpID ||
+		store.principal.SubjectID != "subject-1" || store.principal.PolicyRevision != "rev-1" {
+		t.Fatalf("v2 principal issuer/binding: HTTP %d store=%+v", w.Code, store.principal)
+	}
+}
