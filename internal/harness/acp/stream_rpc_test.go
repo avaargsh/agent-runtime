@@ -205,7 +205,7 @@ func TestStreamRPCCancelUnblocksStalledWriteAndFailsClosed(t *testing.T) {
 
 func TestStreamRPCRejectsAmbiguousAgentResponseAndRetiresStream(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name  string
 		reply func(any) map[string]any
 	}{
 		{"both result and error", func(id any) map[string]any {
