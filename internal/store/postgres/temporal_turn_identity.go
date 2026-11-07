@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrTemporalTurnUntrustedRun = errors.New("Runtime Run is not bound to an immutable ACP principal")
+	ErrTemporalTurnUntrustedRun  = errors.New("Runtime Run is not bound to an immutable ACP principal")
 	ErrTemporalExecutionConflict = errors.New("different Temporal execution attempted to own an existing Runtime Run")
 )
 
@@ -124,7 +124,7 @@ func (s *Store) GetOrCreateTemporalTurn(
 	identity := run.TemporalTurnIdentity{
 		TenantID: tenantID, RunID: runID, WorkflowID: workflowID,
 		TemporalExecutionID: temporalExecutionID,
-		RunAttemptID: attemptID, TurnID: turnID,
+		RunAttemptID:        attemptID, TurnID: turnID,
 		InvocationID: invocationID, TurnIndex: turnIndex,
 	}
 	if err := identity.Validate(); err != nil {
