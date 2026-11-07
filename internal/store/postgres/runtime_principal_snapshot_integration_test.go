@@ -132,3 +132,29 @@ func TestRuntimePrincipalSnapshotAtomicReplayAndUnmodifiable(t *testing.T) {
 		}
 	}
 }
+
+func TestPrincipalAcceptanceOutboxFailureRollsBackRunSnapshotAndBreaker(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	// Inject a real SQL failure after both Run and principal snapshot inserts.
+	if _, err := pool.Exec(ctx, "ALTER TABLE runtime_outbox ADD CONSTRAINT test_reject_start CHECK (event_type <> 'RUN_START_REQUESTED')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot()); err == nil {
+		t.Fatal("Runtime committed Run despite start Outbox failure")
+	}
+	for _, query := range []string{
+		"SELECT count(*) FROM runs",
+		"SELECT count(*) FROM runtime_run_principal_snapshots",
+		"SELECT count(*) FROM runtime_outbox",
+		"SELECT count(*) FROM runtime_circuit_breakers WHERE scope_kind='RUN'",
+	} {
+		var count int
+		if err := pool.QueryRow(ctx, query).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("failed principal acceptance leaked %d rows: %s", count, query)
+		}
+	}
+}
