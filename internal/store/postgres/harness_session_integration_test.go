@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/avaargsh/agent-runtime/internal/harness/acp"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
@@ -274,5 +275,97 @@ func TestHarnessClaimMigrationVersionAndReapply(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, "INSERT INTO runtime_harness_session_claims (tenant_id, run_id) VALUES ('x', '11111111-1111-4111-8111-111111111111'::uuid)"); err == nil {
 		t.Fatal("incomplete orphaned harness claim was accepted")
+	}
+}
+
+func TestHarnessSessionClaimCannotRaceUncommittedRunCancellation(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Hold a cancellation transaction's Run row lock while a competing
+	// creation claim reads the authoritative RUNNING predicate.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `UPDATE runs SET status='CANCELLED', updated_at=now()
+		WHERE tenant_id=$1 AND run_id=$2::uuid`, claim.TenantID, claim.RunID); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		record acp.SessionClaimRecord
+		err error
+	}
+	out := make(chan result, 1)
+	go func() {
+		r, e := store.ClaimHarnessSession(ctx, claim)
+		out <- result{r, e}
+	}()
+	// Give the concurrent SQL statement time to enter PostgreSQL while the
+	// cancelling transaction holds its row lock. The operation must eventually
+	// observe the committed cancellation, not a stale pre-lock snapshot.
+	select {
+	case <-out:
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Read the outcome afresh: a prior success is a security regression.
+	got := <-out
+	if !errors.Is(got.err, acp.ErrBindingInvalid) || got.record.Created {
+		t.Fatalf("cancelled Run gained a new Harness claim: %+v err=%v", got.record, got.err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM runtime_harness_session_claims
+		WHERE tenant_id=$1 AND run_id=$2::uuid`, claim.TenantID, claim.RunID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("cancelled Run retained %d unauthorized Harness claims", count)
+	}
+}
+
+func TestHarnessDispatchCannotRaceUncommittedRunCancellation(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `UPDATE runs SET status='CANCELLED', updated_at=now()
+		WHERE tenant_id=$1 AND run_id=$2::uuid`, claim.TenantID, claim.RunID); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		allowed bool
+		err error
+	}
+	out := make(chan result, 1)
+	go func() {
+		ok, e := store.BeginHarnessSessionDispatch(ctx, claim)
+		out <- result{ok, e}
+	}()
+	select {
+	case <-out:
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := <-out
+	if got.allowed || !errors.Is(got.err, acp.ErrBindingInvalid) {
+		t.Fatalf("cancelled Run gained a session/new dispatch grant: %+v", got)
+	}
+	record, err := store.ReadHarnessSessionClaim(ctx, claim)
+	if err != nil || record.State != acp.ClaimPrepared {
+		t.Fatalf("rejected dispatch modified preflight claim: %+v err=%v", record, err)
 	}
 }
