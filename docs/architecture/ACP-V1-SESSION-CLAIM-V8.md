@@ -34,14 +34,19 @@ A transaction timeout or lost ACK does not prove the operation failed.
 ### API obligations
 
 - `ClaimHarnessSession`: require tenant-bound persisted RUNNING Run, matching
-  AgentRelease and canonical RunIntent SHA-256 digest. Same entire claim
-  replay returns the existing state; changing Attempt, Harness instance,
-  release, policy revision, digest, or CWD conflicts.
+  AgentRelease and canonical RunIntent SHA-256 digest, **and an immutable
+  `acp-principal/v1` Runtime snapshot for the exact tenant/Run with matching
+  PolicyRevision**. The schema-qualified snapshot relation uses the same
+  trusted startup schema as the Run and Claim. A legacy Run lacking that
+  snapshot cannot create a Harness session claim. Same entire claim replay
+  returns the existing state; changing Attempt, Harness instance, release,
+  policy revision, digest, or CWD conflicts.
 - `BeginHarnessSessionDispatch`: the only creation grant, atomic
-  PREPARED->UNKNOWN and permitted once. Missing or changed claim, cancelled
-  Run, stale digest or wrong tenant cannot gain dispatch authority. A
-  second call after the first grant returns false even if the first
-  caller lost its ACK.
+  PREPARED->UNKNOWN and permitted once. It rechecks the same persisted
+  tenant/Run Principal/Policy snapshot at dispatch time. Missing or changed
+  claim, missing or mismatched principal/policy, cancelled Run, stale digest
+  or wrong tenant cannot gain dispatch authority. A second call after the
+  first grant returns false even if the first caller lost its ACK.
 - `ConfirmHarnessSession`: UNKNOWN->CONFIRMED with returned Agent Session ID.
   Same response replay is idempotent; a different ID conflicts.
 - `ReadHarnessSessionClaim`: tenant-scoped read; a database miss is **not**
@@ -51,7 +56,8 @@ A transaction timeout or lost ACK does not prove the operation failed.
 ## Evidence and limitations
 
 - Repository tests verify concurrent claim/dispatch, exact identity replay,
-  cross-tenant mismatch, status and digest validation, simulated lost ACK,
+  cross-tenant mismatch, status and digest validation, persisted principal/policy
+  rejection and `pg_temp` authority spoofing, simulated lost ACK,
   store recreation, confirmation conflicts, and migration immutability.
 - These tests use PostgreSQL and no external Harness executable. They do
   not prove a real session/new, Codex or Claude Code compatibility, true
@@ -60,9 +66,12 @@ A transaction timeout or lost ACK does not prove the operation failed.
   independent persisted current-Attempt authority read/fence; the
   `acp.BindingStore` adapter must NOT be wired to live execution on the
   strength of this claim record alone.
-- PolicyRevision is a correlation field, NOT a verified principal or Permit.
-  ACP control-plane #10 and Runtime #20 must provide the authenticated
-  immutable principal/policy snapshot before production use.
+- PolicyRevision is now **compared against the persisted v7 immutable
+  PrincipalSnapshot** for both creation and dispatch. This proves only that
+  those database records agree; it does **not** authenticate the original ACP
+  workload issuer or initiating actor, prove current Attempt validity, or
+  issue an EngageGuard Permit. Real mTLS-backed principal provisioning,
+  revocation and independent least-privilege database roles remain gated.
 - This schema uses the existing Runtime PostgreSQL role/search_path setup.
   An independent low-privilege DB role, trigger/catalog drift attestation,
   pg_temp/search_path shadowing and restore tests remain separate security
