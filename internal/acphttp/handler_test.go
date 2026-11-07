@@ -244,7 +244,7 @@ func TestV2RequiresExactPrincipalContextAndVerifiedWorkloadIssuer(t *testing.T) 
 	}
 	for _, tc := range []struct {
 		name string
-		raw string
+		raw  string
 	}{
 		{"no snapshot", body()},
 		{"forged issuer", strings.Replace(valid, `"project_id":`, `"issuer_spiffe_id":"spiffe://attacker/acp","project_id":`, 1)},
