@@ -117,16 +117,22 @@ func (s *StreamRPC) Call(ctx context.Context, method string, params any, result 
 			return response.err
 		}
 		if len(response.result) == 0 {
-			return fmt.Errorf("%w: missing ACP response result", ErrRPCStreamClosed)
+			err := fmt.Errorf("%w: missing ACP response result", ErrRPCStreamClosed)
+			s.fail(err)
+			return err
 		}
 		if result != nil {
 			if err := json.Unmarshal(response.result, result); err != nil {
-				return fmt.Errorf("%w: malformed ACP response: %v", ErrRPCStreamClosed, err)
+				closedErr := fmt.Errorf("%w: malformed ACP response: %v", ErrRPCStreamClosed, err)
+				s.fail(closedErr)
+				return closedErr
 			}
 		}
 		return nil
 	case <-ctx.Done():
-		s.forget(id)
+		// A reply may still arrive after cancellation. Retire the connection
+		// synchronously before the deferred AfterFunc cancellation is stopped.
+		s.fail(ctx.Err())
 		return ctx.Err()
 	}
 }
