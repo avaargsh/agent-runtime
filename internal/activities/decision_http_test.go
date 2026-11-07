@@ -92,6 +92,7 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 		},
 		Breakers:     store,
 		Runs:         testRunIdentityReader(),
+		Principals:   testPrincipalReader(),
 		PollInterval: 5 * time.Millisecond,
 	}
 
