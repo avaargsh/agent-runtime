@@ -22,6 +22,7 @@ import (
 const (
 	maxBodyBytes = 256*1024 + 4096
 	acceptPath   = "/internal/v1/run-intents:accept"
+	acceptPathV2 = "/internal/v2/run-intents:accept"
 	inspectPath  = "/internal/v1/run-intents/"
 )
 
@@ -84,13 +85,13 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED")
 		return
 	}
-	if r.URL.Path == acceptPath {
+	if r.URL.Path == acceptPath || r.URL.Path == acceptPathV2 {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED")
 			return
 		}
-		h.accept(w, r)
+		h.accept(w, r, r.URL.Path == acceptPathV2)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, inspectPath) {
@@ -113,9 +114,23 @@ type requestWire struct {
 	AgentReleaseID string          `json:"agent_release_id"`
 	SessionID      string          `json:"session_id"`
 	Input          json.RawMessage `json:"input"`
+	Principal      *principalWire  `json:"principal_context,omitempty"`
 }
 
-func (h *handler) accept(w http.ResponseWriter, r *http.Request) {
+type principalWire struct {
+	Version        string `json:"version"`
+	ProjectID      string `json:"project_id"`
+	SubjectID      string `json:"subject_id"`
+	ActorID        string `json:"actor_id"`
+	PolicyRevision string `json:"policy_revision"`
+	ConfigDigest   string `json:"config_digest"`
+}
+
+type principalStore interface {
+	AcceptIntentWithPrincipal(context.Context, run.IntentStartRequest, run.PrincipalSnapshot) (run.IntentReceipt, error)
+}
+
+func (h *handler) accept(w http.ResponseWriter, r *http.Request, withPrincipal bool) {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST")
@@ -123,7 +138,7 @@ func (h *handler) accept(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil || len(raw) == 0 || !utf8.Valid(raw) ||
-		validateUniqueJSON(raw) != nil || validateExactEnvelope(raw) != nil {
+		validateUniqueJSON(raw) != nil || validateExactEnvelope(raw, withPrincipal) != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
@@ -148,7 +163,31 @@ func (h *handler) accept(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
-	receipt, err := h.store.AcceptIntent(r.Context(), command)
+	var receipt run.IntentReceipt
+	if withPrincipal {
+		// Only the verified mTLS allowlisted service can assert initiating
+		// subject/actor/policy. Never accept an issuer supplied in JSON.
+		writer, ok := h.store.(principalStore)
+		if !ok || wire.Principal == nil {
+			writeError(w, http.StatusServiceUnavailable, "PRINCIPAL_STORE_UNAVAILABLE")
+			return
+		}
+		snapshot := run.PrincipalSnapshot{
+			Version: wire.Principal.Version, IssuerSPIFFEID: h.identity,
+			ProjectID: wire.Principal.ProjectID, SubjectID: wire.Principal.SubjectID,
+			ActorID: wire.Principal.ActorID, PolicyRevision: wire.Principal.PolicyRevision,
+			ConfigDigest: wire.Principal.ConfigDigest,
+		}
+		if err := snapshot.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST")
+			return
+		}
+		receipt, err = writer.AcceptIntentWithPrincipal(r.Context(), command, snapshot)
+	} else {
+		// v1 is retained for read-only/legacy integration compatibility.
+		// Its Runs have no trusted principal and are not Start-eligible.
+		receipt, err = h.store.AcceptIntent(r.Context(), command)
+	}
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -293,14 +332,17 @@ func validateUniqueJSON(raw []byte) error {
 // validateExactEnvelope rejects Go encoding/json's permissive case-folded
 // struct field aliases and all missing required fields. A present "input"
 // must be an object; omission is not silently rewritten as empty input.
-func validateExactEnvelope(raw []byte) error {
+func validateExactEnvelope(raw []byte, withPrincipal bool) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
 		return errors.New("invalid ACP request envelope")
 	}
-	required := [...]string{
+	required := []string{
 		"tenant_id", "run_intent_id", "request_digest",
 		"agent_id", "agent_release_id", "session_id", "input",
+	}
+	if withPrincipal {
+		required = append(required, "principal_context")
 	}
 	if len(fields) != len(required) {
 		return errors.New("unexpected or missing ACP request field")
@@ -308,6 +350,24 @@ func validateExactEnvelope(raw []byte) error {
 	for _, key := range required {
 		if _, ok := fields[key]; !ok {
 			return errors.New("missing exact ACP request field")
+		}
+	}
+	if withPrincipal {
+		var principal map[string]json.RawMessage
+		if err := json.Unmarshal(fields["principal_context"], &principal); err != nil || principal == nil {
+			return errors.New("invalid ACP principal context")
+		}
+		principalFields := [...]string{
+			"version", "project_id", "subject_id", "actor_id",
+			"policy_revision", "config_digest",
+		}
+		if len(principal) != len(principalFields) {
+			return errors.New("unexpected ACP principal context field")
+		}
+		for _, key := range principalFields {
+			if _, ok := principal[key]; !ok {
+				return errors.New("missing exact ACP principal context field")
+			}
 		}
 	}
 	return nil
