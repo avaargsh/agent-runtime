@@ -113,9 +113,9 @@ func TestTemporalTurnIdentityRejectsUnboundLegacyWrongScopeAndMalformedExecution
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name string
+		name                               string
 		tenant, runID, workflow, execution string
-		ordinal int32
+		ordinal                            int32
 	}{
 		{"wrong tenant", "tenant-victim", bound.RunID, bound.WorkflowID, firstTemporalExecutionID, 1},
 		{"wrong workflow", bound.TenantID, bound.RunID, "agent-run/v1/spoof", firstTemporalExecutionID, 1},
