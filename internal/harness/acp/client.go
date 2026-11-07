@@ -45,13 +45,13 @@ type BindingStore interface {
 // Confirmed means session/new was durably bound after a confirmed response;
 // it says nothing about the outcome of a later session/prompt.
 type Binding struct {
-	TenantID       string
-	RunID          string
-	AttemptID      string
+	TenantID          string
+	RunID             string
+	AttemptID         string
 	HarnessInstanceID string
-	AgentSessionID string
-	WorkingDir     string
-	Confirmed      bool
+	AgentSessionID    string
+	WorkingDir        string
+	Confirmed         bool
 }
 
 func validIdentifier(v string) bool {
@@ -87,8 +87,8 @@ const (
 )
 
 type Client struct {
-	rpc   RPC
-	store BindingStore
+	rpc               RPC
+	store             BindingStore
 	harnessInstanceID string
 	mu    sync.RWMutex
 	ready bool
