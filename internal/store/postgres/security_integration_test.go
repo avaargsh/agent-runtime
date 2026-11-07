@@ -104,9 +104,12 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
 
-	// Reproduce a database genuinely stopped at v4, not merely a v5
-	// ledger gap while the newer v6 Outbox lease schema remains installed.
+	// Reproduce a database genuinely stopped at v4, removing both
+	// newer v6/v7 schemas and migration ledger entries before upgrading.
 	for _, sql := range []string{
+		"DROP TABLE runtime_run_principal_snapshots",
+		"DROP FUNCTION reject_runtime_principal_mutation()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 7",
 		"DROP INDEX runtime_outbox_start_claim_idx",
 		"ALTER TABLE runtime_outbox DROP CONSTRAINT runtime_start_lease_pair",
 		"ALTER TABLE runtime_outbox DROP COLUMN lease_owner, DROP COLUMN lease_expires_at",
@@ -136,8 +139,8 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 6 {
-		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 6", version)
+	if version != 7 {
+		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 7", version)
 	}
 	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
 		t.Fatal("previously applied v4 database still permits audit TRUNCATE")
