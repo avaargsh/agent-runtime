@@ -146,7 +146,7 @@ func TestInvokeDecisionRejectsOpenBreakerBeforeCallingClient(t *testing.T) {
 	}
 	store := &fakeBreakerStore{records: []breaker.Record{opened}}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader()}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded with OPEN Run breaker")
@@ -168,6 +168,7 @@ func TestInvokeDecisionCancelsInFlightRequestWhenBreakerOpens(t *testing.T) {
 		Client:       client,
 		Breakers:     store,
 		Runs:         testRunIdentityReader(),
+		Principals:   testPrincipalReader(),
 		PollInterval: time.Millisecond,
 	}
 
@@ -197,7 +198,7 @@ func TestInvokeDecisionCancelsInFlightRequestWhenBreakerOpens(t *testing.T) {
 func TestInvokeDecisionFailsClosedWhenBreakerStoreUnavailable(t *testing.T) {
 	store := &fakeBreakerStore{err: errors.New("postgres unavailable")}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader()}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded while breaker state was unavailable")
@@ -210,7 +211,7 @@ func TestInvokeDecisionFailsClosedWhenBreakerStoreUnavailable(t *testing.T) {
 func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 	store := &fakeBreakerStore{}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader()}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded without a durable Run breaker")
@@ -223,7 +224,7 @@ func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader()}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
 
 	_, err := activity.InvokeDecision(context.Background(), activityTurn())
 	if err != nil {
@@ -242,7 +243,7 @@ func TestInvokeDecisionRejectsWorkflowIdentityThatDiffersFromPersistedRun(t *tes
 	reader.identity.TenantID = "tenant-victim"
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: reader}
+	activity := Activities{Client: client, Breakers: store, Runs: reader, Principals: testPrincipalReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() accepted a Workflow tenant that differs from the persisted Run")
@@ -311,6 +312,7 @@ func TestInvokeDecisionIgnoresWatcherQueryCancelledByNormalCompletion(t *testing
 		Client:       waitForPollInvoker{pollStarted: store.pollStarted},
 		Breakers:     store,
 		Runs:         testRunIdentityReader(),
+		Principals:   testPrincipalReader(),
 		PollInterval: time.Millisecond,
 	}
 
