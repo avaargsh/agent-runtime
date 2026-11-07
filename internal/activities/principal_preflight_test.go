@@ -22,7 +22,7 @@ func validPrincipalFixture() run.PrincipalSnapshot {
 		Version: "acp-principal/v1", IssuerSPIFFEID: "spiffe://example.org/acp",
 		ProjectID: "project-1", SubjectID: "subject-1", ActorID: "actor-1",
 		PolicyRevision: "policy-1",
-		ConfigDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		ConfigDigest:   "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}
 }
 
@@ -45,10 +45,10 @@ func TestDecisionEgressRejectsMissingPrincipalStore(t *testing.T) {
 }
 
 func TestDecisionEgressRejectsMissingOrInvalidDurablePrincipal(t *testing.T) {
-	cases := []struct{
-		name string
+	cases := []struct {
+		name     string
 		snapshot run.PrincipalSnapshot
-		err error
+		err      error
 	}{
 		{"missing", run.PrincipalSnapshot{}, errors.New("principal row absent")},
 		{"malformed", run.PrincipalSnapshot{Version: "acp-principal/v1", SubjectID: "spoofed"}, nil},
