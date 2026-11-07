@@ -84,3 +84,9 @@ func TestDecisionEgressWithBoundSnapshotPreservesRunCorrelation(t *testing.T) {
 		t.Fatalf("wrong principal correlation: client=%d reader=%+v", client.calls, reader)
 	}
 }
+
+// Tests that exercise the breaker/Decision path supply a persisted-principal
+// fixture explicitly. The production worker always uses the PostgreSQL reader.
+func testPrincipalReader() *principalFixtureReader {
+	return &principalFixtureReader{snapshot: validPrincipalFixture()}
+}
