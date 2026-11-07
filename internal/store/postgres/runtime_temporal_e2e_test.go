@@ -47,8 +47,8 @@ func TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity(t *
 	// Use the same SQLite history across actual Temporal Server processes.
 	opts := testsuite.DevServerOptions{
 		CachedDownload: testsuite.CachedDownload{Version: "v1.10.0"},
-		DBFilename: filepath.Join(t.TempDir(), "temporal-history.db"),
-		LogLevel: "error",
+		DBFilename:     filepath.Join(t.TempDir(), "temporal-history.db"),
+		LogLevel:       "error",
 	}
 	server, err := testsuite.StartDevServer(ctx, opts)
 	if err != nil {
@@ -63,10 +63,10 @@ func TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity(t *
 		t.Fatal(err)
 	}
 	workflowOptions := client.StartWorkflowOptions{
-		ID: first.WorkflowID,
-		TaskQueue: queue,
-		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
-		WorkflowIDConflictPolicy: enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
+		ID:                                       first.WorkflowID,
+		TaskQueue:                                queue,
+		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
 	}
 	execution, err := c.ExecuteWorkflow(ctx, workflowOptions, temporalStartIdentityProbe)
