@@ -26,19 +26,23 @@ Protocol v1 reference:
 3. `Recover` uses only an authoritative, committed, tenant/Run-bound `BindingStore` record to call `session/load`. A successful load reports `SESSION_LOADED_OUTCOME_UNCERTAIN`, **never** an automatically retriable prompt or a completed Run.
 4. `Cancel` sends the ACP v1 one-way `session/cancel` notification only after lookup. Reporting `CANCEL_SENT_UNCONFIRMED` does not claim process termination, Guard revocation or side-effect rollback.
 5. Database outage, missing/unconfirmed or mismatched binding, failed load, lost transport reply, unsupported load capability and invalid tenant/Run identity remain `UNKNOWN_RECONCILE`.
-6. No `session/new` or `session/prompt` is wired: duplicate Session/Run creation and lost prompt ACK are out of scope until durable preparation and fencing exist.
+6. No `session/new` or `session/prompt` is wired: a persistent pre-dispatch claim does not itself authorize an external call.
+7. The Draft PostgreSQL v7/v8/v9 migration chain stores immutable Principal, Temporal Attempt and one Harness Claim with PREPARED→UNKNOWN→CONFIRMED semantics. `postgres.Store.LookupBinding` implements a **read-only** `BindingStore` that exposes only a confirmed tenant/Run/Attempt/Policy-bound Agent Session. UNKNOWN and missing bindings never authorize `session/load` or another `session/new`.
+8. `NewStreamRPC` accepts an **already supplied** `io.ReadWriteCloser` (it does not spawn or authenticate a process). It uses newline-delimited JSON-RPC 2.0 and a 1 MiB maximum frame; it processes incoming messages while `Call` awaits a response, tracks request IDs and fails all outstanding calls on malformed, oversized or closed streams. Untrusted `session/update` notifications enter a **bounded, non-durable** channel; overflow terminates the stream, rather than losing events silently.
+9. Outbound methods are restricted to `initialize`, `session/load` and one-way `session/cancel`. Agent `session/request_permission` receives the v1 `cancelled` outcome with **no option selected**. Client filesystem and terminal requests are answered with JSON-RPC method-not-found. Unknown Agent notifications never grant authority. This is not an EngageGuard approval mechanism.
+10. An integration test exercises the actual PostgreSQL claim + ACP v1 Client + bidirectional JSON-RPC bytes over `net.Pipe`: it denies unconfirmed sessions and an Agent's allow-once permission request during `session/load`, then delivers a best-effort cancellation on the confirmed session. It does not run a real Agent executable.
 
 ## Required next P0 slices (not implemented)
 
-**P0-A: persistent binding and creation journal**
-- Add a Runtime-owned PostgreSQL 17 migration and tenant-scoped repository for Run/Attempt ↔ ACP AgentSessionID, harness kind, working directory and capability snapshot.
-- Persist a UNIQUE, immutable logical session creation identity *before* invoking `session/new` and a confirmed result afterward. Persist UNKNOWN after ambiguous transport outcome. An unconfirmed creation MUST NOT be retried as another `session/new` without reconciliation/fencing.
-- Under concurrent acceptance, restarts and lost ACK, assert one canonical Run and no competing bindings. Preserve original principal/release/tenant identity. Do not infer ACP agent identity from the process or session string.
+**P0-A: persistent binding and creation journal — Draft database slice implemented, external execution still gated**
+- The Runtime-owned PostgreSQL v9 claim binds persisted Run/Attempt/Release/Policy and is unique per tenant+Run; a confirmed AgentSessionID is readable by the ACP Client only after a persisted UNKNOWN→CONFIRMED transition.
+- `PREPARED`→`UNKNOWN` is committed **before** any hypothetical `session/new`; a lost dispatch ACK is never permission to retry blindly. The actual server-authenticated Temporal caller, pre-execution fencing, durable inbox/reconciliation and Agent capability attestation remain outside this PR.
+- Cross-service ACK loss, concurrent Runtime replicas, long-running Agent process ownership and real worker/process restart still need independent evidence. Never infer Agent identity from a process or an opaque session string.
 
-**P0-B: secure bidirectional transport**
-- A sandboxed, pinned executable / provider adapter for Codex and Claude Code, with bounded stderr/stdout, line framing, size limits, timeouts, version pinning and independent authentication.
-- The RPC transport must process inbound `session/update` and `session/request_permission` while calls are pending. No auto-approval, arbitrary path access, terminal use or model-origin credentials.
-- SecurityContext and policy decisions originate from authenticated ACP (control-plane) + Runtime + EngageGuard, not Agent messages.
+**P0-B: secure bidirectional transport — protocol framing slice implemented, process boundary NOT implemented**
+- The transport reads bounded newline-delimited frames and responds to Agent permission requests with `cancelled`. It never starts a subprocess, grants capabilities, or automatically approves an Agent operation.
+- Still required: independently authenticated, pinned/sandboxed Codex or Claude-compatible executable, explicit working-directory allowlist, bounded stderr, subprocess kill/reap, OS-level read/write deadlines, and capability/credential isolation. The supplied `io.ReadWriteCloser` must already meet those operational requirements before production use.
+- `session/update` is **not** an audit event or durable evidence merely because it was buffered. An independent Event Inbox consumer must validate, authorize, persist and correlate all event identities. The bounded queue closes on overflow. SecurityContext and all protected effects remain under authenticated ACP (control-plane) + Runtime + EngageGuard authority.
 
 **P0-C: replay/UNKNOWN and Temporal integration**
 - Wire into a dedicated Temporal activity with a durable Run/Attempt identity, event inbox and operation journal references. Classify missing ACK as UNKNOWN and reconcile before reissue; never convert timeout to FAILED automatically.
@@ -50,9 +54,8 @@ Protocol v1 reference:
 
 ## Evidence levels
 
-- Implemented: the pure Go seam in `internal/harness/acp` and deterministic fake-RPC/store tests.
-- Locally verified: isolated Go standard-library `go test -race -count=1 ./...`, `go vet ./...`, `gofmt`. This is **not** the Go 1.26 full Runtime build.
-- Repository exact-head CI: must be checked on this PR head; do not inherit a parent PR's prior green checks.
-- Real environment: no PostgreSQL BindingStore, no real Agent executable, no Temporal workflow, no EngageGuard interaction, no real multi-device approval or staging receipt.
+- Implemented in Draft PR: ACP v1 fake/store seam, bounded default-deny JSON-RPC stream, PostgreSQL v9 confirmed-binding read, and their isolated integration tests.
+- Repository evidence: Go 1.26 race/vet/gofmt and PostgreSQL 17 integration are run in GitHub Actions. Verify the **latest exact PR synthetic merge tree** before considering a change accepted; no parent CI or historical GREEN may be inherited.
+- Not yet accepted: actual external Codex/Claude process; sandbox, independent authentication or process lifecycle; protected actions; a real Harness `session/new`; Temporal worker/Agent crash + ambiguous session ACK; approval/UI; or staging receipt. PostgreSQL tests do not confer production credentials or attest isolated roles.
 
 Keep this work **Draft** until the outstanding P0 requirements have independent evidence. The slice makes no claim of full ACP implementation, secure sandboxing, production permissions, restart recovery, or any exactly-once external effect.
