@@ -130,3 +130,38 @@ func TestHarnessClaimRejectsAmbiguousStartupSearchPath(t *testing.T) {
 		t.Fatalf("ambiguous configured schema accepted: %+v %v", record, err)
 	}
 }
+
+func TestHarnessClaimIgnoresPgTempPrincipalPolicyShadow(t *testing.T) {
+	pool, _, claim := harnessFixture(t)
+	ctx := context.Background()
+	cfg := pool.Config()
+	cfg.MaxConns = 1
+	shadowPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shadowPool.Close()
+
+	// A caller-controlled temp relation must not spoof the immutable ACP
+	// principal/policy that authorizes a Harness creation claim.
+	if _, err := shadowPool.Exec(ctx, `
+		CREATE TEMP TABLE runtime_run_principal_snapshots AS TABLE runtime_run_principal_snapshots;
+		UPDATE runtime_run_principal_snapshots SET policy_revision='forged-policy'
+	`); err != nil {
+		t.Fatalf("create forged temporary principal snapshot: %v", err)
+	}
+	spoofed := claim
+	spoofed.PolicyRevision = "forged-policy"
+	record, err := postgres.New(shadowPool).ClaimHarnessSession(ctx, spoofed)
+	if !errors.Is(err, acp.ErrBindingInvalid) || record.Created {
+		t.Fatalf("temporary principal policy authorized Harness creation: %+v err=%v", record, err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM runtime_harness_session_claims
+		WHERE tenant_id=$1 AND run_id=$2::uuid`, claim.TenantID, claim.RunID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("temporary principal shadow created %d authoritative claims", count)
+	}
+}
