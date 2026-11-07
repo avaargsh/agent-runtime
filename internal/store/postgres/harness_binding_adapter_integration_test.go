@@ -25,9 +25,9 @@ func (p *durableHarnessRPCProbe) Call(_ context.Context, method string, params a
 		return json.Unmarshal([]byte(`{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}`), result)
 	case "session/load":
 		var input struct {
-			SessionID string `json:"sessionId"`
-			CWD       string `json:"cwd"`
-			MCPServers []any `json:"mcpServers"`
+			SessionID  string `json:"sessionId"`
+			CWD        string `json:"cwd"`
+			MCPServers []any  `json:"mcpServers"`
 		}
 		b, err := json.Marshal(params)
 		if err != nil {
