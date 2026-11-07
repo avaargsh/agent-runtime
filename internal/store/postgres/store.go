@@ -207,16 +207,36 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record Runtime principal migration: %w", err)
 		}
 	}
-	// V8 adds the immutable ACP Harness session creation claim/UNKNOWN fence.
-	// Never rewrite already-applied schema migrations.
+	// v8 binds one server-assigned Temporal execution to durable
+	// Runtime-owned Attempt/Turn identities; legacy Runs are unaffected.
 	var v8Applied bool
 	if err := tx.QueryRow(ctx,
 		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 8)",
 	).Scan(&v8Applied); err != nil {
-		return fmt.Errorf("read Runtime Harness migration ledger: %w", err)
+		return fmt.Errorf("read Runtime Temporal identity migration ledger: %w", err)
 	}
 	if !v8Applied {
-		script, err := migrationFiles.ReadFile("migrations/0008_runtime_harness_session_claims.up.sql")
+		script, err := migrationFiles.ReadFile("migrations/0008_runtime_temporal_execution_identity.up.sql")
+		if err != nil {
+			return fmt.Errorf("read Runtime Temporal identity migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply Runtime Temporal identity migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO runtime_schema_migrations (version) VALUES (8)"); err != nil {
+			return fmt.Errorf("record Runtime Temporal identity migration: %w", err)
+		}
+	}
+	// V9 adds the immutable ACP Harness session creation claim/UNKNOWN fence.
+	// Never rewrite already-applied schema migrations.
+	var v9Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 9)",
+	).Scan(&v9Applied); err != nil {
+		return fmt.Errorf("read Runtime Harness migration ledger: %w", err)
+	}
+	if !v9Applied {
+		script, err := migrationFiles.ReadFile("migrations/0009_runtime_harness_session_claims.up.sql")
 		if err != nil {
 			return fmt.Errorf("read Runtime Harness migration: %w", err)
 		}
@@ -224,12 +244,12 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("apply Runtime Harness migration: %w", err)
 		}
 		if _, err := tx.Exec(ctx,
-			"INSERT INTO runtime_schema_migrations (version) VALUES (8)",
+			"INSERT INTO runtime_schema_migrations (version) VALUES (9)",
 		); err != nil {
 			return fmt.Errorf("record Runtime Harness migration: %w", err)
 		}
 	}
-	// Attest the actual v8 protections even if the ledger already says
+	// Attest the actual v9 protections even if the ledger already says
 	// applied. A disabled/replaced trigger must fail migration/startup closed.
 	if err := verifyHarnessClaimCatalog(ctx, tx); err != nil {
 		return err

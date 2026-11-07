@@ -24,7 +24,7 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 	if err := claim.Validate(); err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
-	claimTable, runTable, principalTable, err := s.harnessRelations()
+	claimTable, runTable, principalTable, attemptTable, err := s.harnessRelations()
 	if err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
@@ -36,6 +36,9 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 			 state)
 		SELECT $1, r.run_id, $3::uuid, $4, $5, $6, $7, $8, 'PREPARED'
 		FROM %s AS r
+		JOIN %s AS a ON a.tenant_id=r.tenant_id
+			AND a.run_id=r.run_id AND a.run_attempt_id=$3::uuid
+			AND a.workflow_id=r.workflow_id
 		WHERE r.tenant_id = $1 AND r.run_id = $2::uuid
 			AND r.agent_release_id = $5 AND r.source_request_digest = $7
 			AND r.status = 'RUNNING'
@@ -45,10 +48,10 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 					AND p.snapshot_version='acp-principal/v1'
 					AND p.policy_revision=$6
 			)
-		FOR SHARE OF r
+		FOR SHARE OF r,a
 		ON CONFLICT (tenant_id, run_id) DO NOTHING
 		RETURNING run_id::text
-	`, claimTable, runTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&insertedRunID)
 	if err == nil {
 		return acp.SessionClaimRecord{SessionClaim: claim, State: acp.ClaimPrepared, Created: true}, nil
@@ -75,7 +78,7 @@ func (s *Store) ReadHarnessSessionClaim(ctx context.Context, claim acp.SessionCl
 	if err := claim.Validate(); err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
-	claimTable, _, _, err := s.harnessRelations()
+	claimTable, _, _, _, err := s.harnessRelations()
 	if err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
@@ -120,7 +123,7 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 	if err := claim.Validate(); err != nil {
 		return false, err
 	}
-	claimTable, runTable, principalTable, err := s.harnessRelations()
+	claimTable, runTable, principalTable, attemptTable, err := s.harnessRelations()
 	if err != nil {
 		return false, err
 	}
@@ -132,7 +135,11 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 			AND c.harness_instance_id=$4 AND c.agent_release_id=$5
 			AND c.policy_revision=$6 AND c.request_digest=$7 AND c.working_dir=$8
 			AND c.state='PREPARED'
-			AND EXISTS (SELECT 1 FROM %s r WHERE r.tenant_id=c.tenant_id
+			AND EXISTS (SELECT 1 FROM %s r
+				JOIN %s a ON a.tenant_id=r.tenant_id
+					AND a.run_id=r.run_id AND a.run_attempt_id=c.attempt_id
+					AND a.workflow_id=r.workflow_id
+				WHERE r.tenant_id=c.tenant_id
 				AND r.run_id=c.run_id AND r.agent_release_id=c.agent_release_id
 				AND r.source_request_digest=c.request_digest AND r.status='RUNNING'
 				AND EXISTS (
@@ -141,9 +148,9 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 						AND p.snapshot_version='acp-principal/v1'
 						AND p.policy_revision=c.policy_revision
 				)
-				FOR SHARE OF r)
+				FOR SHARE OF r,a)
 		RETURNING c.run_id::text
-	`, claimTable, runTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&runID)
 	if err == nil {
 		return true, nil
@@ -176,7 +183,7 @@ func (s *Store) ConfirmHarnessSession(ctx context.Context, claim acp.SessionClai
 	if !validAgentSessionID(agentSessionID) {
 		return acp.SessionClaimRecord{}, acp.ErrBindingInvalid
 	}
-	claimTable, _, _, err := s.harnessRelations()
+	claimTable, _, _, _, err := s.harnessRelations()
 	if err != nil {
 		return acp.SessionClaimRecord{}, err
 	}

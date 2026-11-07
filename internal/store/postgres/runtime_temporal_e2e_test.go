@@ -77,6 +77,12 @@ func TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity(t *
 	if execution.GetID() != first.WorkflowID || temporalRunID == "" {
 		t.Fatalf("Temporal changed canonical Workflow ID: %s %s", execution.GetID(), temporalRunID)
 	}
+	// Bind only the Temporal Server-returned Workflow execution identity,
+	// never an ACP request/Workflow payload or model-proposed Attempt ID.
+	boundTurn, err := store.GetOrCreateTemporalTurn(ctx, receipt.TenantID, first.RunID, first.WorkflowID, temporalRunID, 1)
+	if err != nil || boundTurn.RunAttemptID == "" || boundTurn.TurnID == "" {
+		t.Fatalf("bind actual Temporal Server execution to Runtime identity: %+v %v", boundTurn, err)
+	}
 	// Pretend Runtime died before persisting the Temporal start ACK. No
 	// AcknowledgeRuntimeStart call occurs. A second worker claims this event.
 	if _, err := pool.Exec(ctx,
@@ -128,6 +134,15 @@ func TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity(t *
 	}
 	defer w.Stop()
 	assertAlreadyStarted(c)
+	// A restarted process must load precisely the same durable Attempt,
+	// Turn and invocation IDs even if the Workflow's start ACK was lost.
+	recoveredTurn, err := postgres.New(pool).GetOrCreateTemporalTurn(ctx, receipt.TenantID, first.RunID, first.WorkflowID, temporalRunID, 1)
+	if err != nil || recoveredTurn != boundTurn {
+		t.Fatalf("Temporal Server/Worker restart changed Runtime-owned turn: before=%+v after=%+v err=%v", boundTurn, recoveredTurn, err)
+	}
+	if _, err := store.GetOrCreateTemporalTurn(ctx, receipt.TenantID, first.RunID, first.WorkflowID, secondTemporalExecutionID, 1); !errors.Is(err, postgres.ErrTemporalExecutionConflict) {
+		t.Fatalf("unreconciled second Temporal execution obtained a new Attempt: %v", err)
+	}
 	if err := c.SignalWorkflow(ctx, first.WorkflowID, temporalRunID, "finish", "verified"); err != nil {
 		t.Fatalf("restarted Worker did not receive existing history: %v", err)
 	}

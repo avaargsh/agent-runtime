@@ -25,9 +25,14 @@ func harnessFixture(t *testing.T) (*pgxpool.Pool, *postgres.Store, acp.SessionCl
 		"tenant-1", receipt.RunID); err != nil {
 		t.Fatal(err)
 	}
+	attempt, err := store.GetOrCreateTemporalTurn(context.Background(), receipt.TenantID,
+		receipt.RunID, receipt.WorkflowID, firstTemporalExecutionID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return pool, store, acp.SessionClaim{
 		TenantID: "tenant-1", RunID: receipt.RunID,
-		AttemptID:         "22222222-2222-4222-8222-222222222222",
+		AttemptID:         attempt.RunAttemptID,
 		HarnessInstanceID: "worker-codex-1", AgentReleaseID: "release-1",
 		PolicyRevision: trustedSnapshot().PolicyRevision, RequestDigest: "sha256:" + strings.Repeat("a", 64),
 		WorkingDir: "/workspace/project",
@@ -267,8 +272,8 @@ func TestHarnessClaimMigrationVersionAndReapply(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
 	var count int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_schema_migrations WHERE version IN (6,7,8)").Scan(&count); err != nil || count != 3 {
-		t.Fatalf("required v6 Outbox, v7 Principal and v8 Harness migrations missing: %d %v", count, err)
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_schema_migrations WHERE version IN (6,7,8,9)").Scan(&count); err != nil || count != 4 {
+		t.Fatalf("required v6 Outbox, v7 Principal, v8 Temporal Attempt and v9 Harness migrations missing: %d %v", count, err)
 	}
 	var principals, harness string
 	if err := pool.QueryRow(ctx, "SELECT coalesce(to_regclass('runtime_run_principal_snapshots')::text, ''), coalesce(to_regclass('runtime_harness_session_claims')::text, '')").Scan(&principals, &harness); err != nil || principals == "" || harness == "" {
@@ -433,7 +438,7 @@ func TestHarnessDispatchRejectsUnboundOrMismatchedPersistedPrincipal(t *testing.
 	if _, err := pool.Exec(ctx, "DROP TRIGGER runtime_principal_no_row_mutation ON runtime_run_principal_snapshots"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM runtime_run_principal_snapshots WHERE run_id=$1::uuid", claim.RunID); err != nil {
+	if _, err := pool.Exec(ctx, "UPDATE runtime_run_principal_snapshots SET policy_revision='tampered' WHERE run_id=$1::uuid", claim.RunID); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); ok || !errors.Is(err, acp.ErrBindingInvalid) {
@@ -449,6 +454,7 @@ func TestHarnessClaimRejectsUnboundCurrentAttempt(t *testing.T) {
 	// A tenant-bound RUNNING Run and trusted Principal alone are insufficient:
 	// AttemptID is otherwise merely caller-supplied and can be invented.
 	_, store, claim := harnessFixture(t)
+	claim.AttemptID = "33333333-3333-4333-8333-333333333333"
 	rec, err := store.ClaimHarnessSession(context.Background(), claim)
 	if !errors.Is(err, acp.ErrBindingInvalid) || rec.Created {
 		t.Fatalf("unbound Attempt gained a Harness creation claim: %+v err=%v", rec, err)

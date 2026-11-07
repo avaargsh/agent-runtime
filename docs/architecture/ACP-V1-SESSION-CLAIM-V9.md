@@ -1,4 +1,4 @@
-# ACP v1 Harness session claim: PostgreSQL v8
+# ACP v1 Harness session claim: PostgreSQL v9
 
 Status: **Draft; repository integration slice only. No real Harness dispatch**.
 
@@ -14,7 +14,7 @@ SessionIdentity, AgentRelease and authenticated initiating principal/policy
 claims. EngageGuard remains the only protected-action Permit/Approval and
 external side-effect authority.
 
-The v8 database migration is additive, preserving migrations 0001-0007.
+The v9 database migration is additive, preserving migrations 0001-0008.
 Its table `runtime_harness_session_claims` has a tenant+Run primary key and
 tenant+Run foreign key, plus a unique confirmed Agent session per pinned
 Harness instance. Identity columns are immutable; row deletion, TRUNCATE
@@ -37,13 +37,15 @@ A transaction timeout or lost ACK does not prove the operation failed.
   AgentRelease and canonical RunIntent SHA-256 digest, **and an immutable
   `acp-principal/v1` Runtime snapshot for the exact tenant/Run with matching
   PolicyRevision**. The schema-qualified snapshot relation uses the same
-  trusted startup schema as the Run and Claim. A legacy Run lacking that
+  trusted startup schema as the Run and Claim. The v8 Runtime/Temporal
+  Attempt must match tenant, Run, AttemptID and workflow; caller-supplied
+  AttemptID alone cannot authorize creation. A legacy Run lacking that
   snapshot cannot create a Harness session claim. Same entire claim replay
   returns the existing state; changing Attempt, Harness instance, release,
   policy revision, digest, or CWD conflicts.
 - `BeginHarnessSessionDispatch`: the only creation grant, atomic
   PREPARED->UNKNOWN and permitted once. It rechecks the same persisted
-  tenant/Run Principal/Policy snapshot at dispatch time. Missing or changed
+  tenant/Run Principal/Policy snapshot and Temporal Attempt at dispatch time. Missing or changed
   claim, missing or mismatched principal/policy, cancelled Run, stale digest
   or wrong tenant cannot gain dispatch authority. A second call after the
   first grant returns false even if the first caller lost its ACK.
@@ -62,10 +64,10 @@ A transaction timeout or lost ACK does not prove the operation failed.
 - These tests use PostgreSQL and no external Harness executable. They do
   not prove a real session/new, Codex or Claude Code compatibility, true
   process recovery, temporal worker crash, remote isolation, or permissions.
-- Current Attempt ID is supplied to the claim. There is **not yet** an
-  independent persisted current-Attempt authority read/fence; the
-  `acp.BindingStore` adapter must NOT be wired to live execution on the
-  strength of this claim record alone.
+- Claim and dispatch now require a persisted v8 Runtime/Temporal Attempt.
+  This does not authenticate the external Temporal Server execution
+  provenance or resolve post-commit cancellation. Do not wire the
+  `acp.BindingStore` adapter to production on this DB check alone.
 - PolicyRevision is now **compared against the persisted v7 immutable
   PrincipalSnapshot** for both creation and dispatch. This proves only that
   those database records agree; it does **not** authenticate the original ACP
@@ -85,9 +87,9 @@ A transaction timeout or lost ACK does not prove the operation failed.
 ## Remaining gates before merge
 
 1. Exact-head Go 1.26 tests, PostgreSQL 17 integration, race, vet, formatting.
-2. Independent code/security review; migration v4->v5->v6->v8 upgrade receipts.
-3. Durable Runtime Attempt authority and trust-verified principal/AgentRelease
-   snapshot, plus least-privilege catalog/trigger/search_path attestations.
+2. Independent code/security review; migration v4->v5->v6->v9 upgrade receipts.
+3. Server-authenticated Temporal execution provenance, current Attempt
+   fencing, and least-privilege catalog/trigger/search_path attestations.
 4. Safe bidirectional ACP JSON-RPC transport, process isolation, session
    events, permission requests denied by default, and real Codex/Claude
    Code compatibility tests.

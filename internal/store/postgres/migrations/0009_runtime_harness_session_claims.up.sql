@@ -1,7 +1,7 @@
--- V8: Runtime-owned ACP v1 Harness session creation fence.
+-- V9: Runtime-owned ACP v1 Harness session creation fence.
 -- A PREPARED claim may be granted for dispatch at most once. We persist
 -- UNKNOWN BEFORE calling session/new, so a lost ACK can never blind-retry.
--- Preserve migration scripts 0001..0007 without changes.
+-- Preserve migration scripts 0001..0008 without changes.
 CREATE TABLE runtime_harness_session_claims (
     tenant_id TEXT NOT NULL CHECK (length(tenant_id) BETWEEN 1 AND 255),
     run_id UUID NOT NULL,
@@ -18,6 +18,10 @@ CREATE TABLE runtime_harness_session_claims (
     CONSTRAINT runtime_harness_session_claim_identity PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runtime_harness_claim_run_fk FOREIGN KEY (tenant_id, run_id)
         REFERENCES runs (tenant_id, run_id) ON DELETE RESTRICT,
+    CONSTRAINT runtime_harness_claim_attempt_fk
+        FOREIGN KEY (tenant_id, run_id, attempt_id)
+        REFERENCES runtime_run_attempts (tenant_id, run_id, run_attempt_id)
+        ON DELETE RESTRICT,
     CONSTRAINT runtime_harness_session_confirmation CHECK (
         (state = 'CONFIRMED') = (agent_session_id IS NOT NULL)
     )
