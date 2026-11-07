@@ -370,3 +370,77 @@ func TestHarnessDispatchCannotRaceUncommittedRunCancellation(t *testing.T) {
 		t.Fatalf("rejected dispatch modified preflight claim: %+v err=%v", record, err)
 	}
 }
+
+func TestHarnessClaimRequiresPersistedACPPrincipalSnapshot(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	// Legacy acceptance is retained for compatibility but cannot authorize
+	// a Harness session/new without a trusted, persisted ACP principal.
+	receipt, err := store.AcceptIntent(ctx, testIntent())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE runs SET status='RUNNING', updated_at=now()
+		WHERE tenant_id=$1 AND run_id=$2::uuid`, "tenant-1", receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
+	claim := acp.SessionClaim{
+		TenantID: "tenant-1", RunID: receipt.RunID,
+		AttemptID: "22222222-2222-4222-8222-222222222222",
+		HarnessInstanceID: "worker-codex-1", AgentReleaseID: "release-1",
+		PolicyRevision: "policy-revision-1", RequestDigest: testIntent().RequestDigest,
+		WorkingDir: "/workspace/project",
+	}
+	if rec, err := store.ClaimHarnessSession(ctx, claim); !errors.Is(err, acp.ErrBindingInvalid) || rec.Created {
+		t.Fatalf("legacy Run without authenticated ACP principal created Harness claim: %+v err=%v", rec, err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM runtime_harness_session_claims
+		WHERE tenant_id=$1 AND run_id=$2::uuid`, claim.TenantID, claim.RunID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("unauthenticated Run created %d Harness claims", count)
+	}
+}
+
+func TestHarnessClaimRequiresExactPersistedPolicyRevision(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	changed := claim
+	changed.PolicyRevision = "different-policy-revision"
+	if rec, err := store.ClaimHarnessSession(ctx, changed); !errors.Is(err, acp.ErrBindingInvalid) || rec.Created {
+		t.Fatalf("caller-supplied policy was promoted to authority: %+v err=%v", rec, err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM runtime_harness_session_claims
+		WHERE tenant_id=$1 AND run_id=$2::uuid`, claim.TenantID, claim.RunID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("mismatched policy created %d Harness claims", count)
+	}
+}
+
+func TestHarnessDispatchRejectsUnboundOrMismatchedPersistedPrincipal(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	// A DB-superuser fixture can deliberately remove the previously trusted
+	// snapshot; ordinary runtime writers must not have such DDL privilege.
+	if _, err := pool.Exec(ctx, "DROP TRIGGER runtime_principal_no_row_mutation ON runtime_run_principal_snapshots"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM runtime_run_principal_snapshots WHERE run_id=$1::uuid", claim.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); ok || !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("unbound principal still received session/new grant: allowed=%t err=%v", ok, err)
+	}
+	rec, err := store.ReadHarnessSessionClaim(ctx, claim)
+	if err != nil || rec.State != acp.ClaimPrepared {
+		t.Fatalf("untrusted dispatch changed state: %+v err=%v", rec, err)
+	}
+}
