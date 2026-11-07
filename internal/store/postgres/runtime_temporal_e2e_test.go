@@ -36,7 +36,7 @@ func TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity(t *
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	receipt, err := store.AcceptIntent(ctx, testIntent())
+	receipt, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
