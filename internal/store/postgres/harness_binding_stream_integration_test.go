@@ -73,8 +73,8 @@ func TestConfirmedPostgresBindingOverBoundedACPStreamDeniesPermission(t *testing
 				if err := send(map[string]any{"jsonrpc": "2.0", "id": 911,
 					"method": "session/request_permission", "params": map[string]any{
 						"sessionId": "wire-confirmed-session",
-						"toolCall": map[string]any{"toolCallId": "external-effect"},
-						"options": []any{map[string]any{"optionId": "allow-once", "kind": "allow_once", "name": "Allow"}},
+						"toolCall":  map[string]any{"toolCallId": "external-effect"},
+						"options":   []any{map[string]any{"optionId": "allow-once", "kind": "allow_once", "name": "Allow"}},
 					}}); err != nil {
 					serverDone <- err
 					return
