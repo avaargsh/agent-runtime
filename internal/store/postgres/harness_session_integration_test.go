@@ -189,6 +189,29 @@ func TestHarnessClaimConfirmIsIdempotentAndConflictsOnDifferentSession(t *testin
 	}
 }
 
+func TestHarnessClaimRejectsControlCharactersBeforeConfirm(t *testing.T) {
+	_, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok {
+		t.Fatalf("dispatch: %t %v", ok, err)
+	}
+	for _, sessionID := range []string{"session\\n1", "session\\r1", "session\\t1"} {
+		if _, err := store.ConfirmHarnessSession(ctx, claim, sessionID); !errors.Is(err, acp.ErrBindingInvalid) {
+			t.Fatalf("control character session ID was accepted: %q: %v", sessionID, err)
+		}
+	}
+	record, err := store.ReadHarnessSessionClaim(ctx, claim)
+	if err != nil || record.State != acp.ClaimUnknown || record.AgentSessionID != "" {
+		t.Fatalf("invalid session ID modified UNKNOWN claim: %+v err=%v", record, err)
+	}
+	if _, err := store.ConfirmHarnessSession(ctx, claim, "session-1"); err != nil {
+		t.Fatalf("valid session ID no longer confirms: %v", err)
+	}
+}
+
 func TestHarnessClaimMustDispatchBeforeConfirmAndValidateRequest(t *testing.T) {
 	_, store, claim := harnessFixture(t)
 	ctx := context.Background()
@@ -360,13 +383,19 @@ func TestHarnessDispatchCannotRaceUncommittedRunCancellation(t *testing.T) {
 		out <- result{ok, e}
 	}()
 	select {
-	case <-out:
+	case early := <-out:
+		t.Fatalf("dispatch returned before cancellation committed: %+v", early)
 	case <-time.After(150 * time.Millisecond):
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got := <-out
+	var got result
+	select {
+	case got = <-out:
+	case <-ctx.Done():
+		t.Fatal("dispatch did not finish after cancellation committed")
+	}
 	if got.allowed || !errors.Is(got.err, acp.ErrBindingInvalid) {
 		t.Fatalf("cancelled Run gained a session/new dispatch grant: %+v", got)
 	}
