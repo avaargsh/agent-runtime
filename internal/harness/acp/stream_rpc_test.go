@@ -255,3 +255,73 @@ func TestStreamRPCRejectsAmbiguousAgentResponseAndRetiresStream(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamRPCMalformedResultRetiresConnection(t *testing.T) {
+	clientConn, agentConn := net.Pipe()
+	defer clientConn.Close()
+	defer agentConn.Close()
+	if err := agentConn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	rpc, err := NewStreamRPC(clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rpc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		var result struct{}
+		finished <- rpc.Call(ctx, "session/load", map[string]any{"sessionId": "session-1"}, &result)
+	}()
+	request := readRPCLine(t, bufio.NewReader(agentConn))
+	writeRPCLine(t, agentConn, map[string]any{
+		"jsonrpc": "2.0", "id": request["id"], "result": []any{"invalid-object"},
+	})
+	select {
+	case err := <-finished:
+		if !errors.Is(err, ErrRPCStreamClosed) {
+			t.Fatalf("invalid result type did not fail closed: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("invalid result type blocked session/load")
+	}
+	if err := rpc.Notify(context.Background(), "session/cancel", nil); !errors.Is(err, ErrRPCStreamClosed) {
+		t.Fatalf("malformed result left stream reusable: %v", err)
+	}
+}
+
+func TestStreamRPCCancelAfterSendRetiresConnection(t *testing.T) {
+	clientConn, agentConn := net.Pipe()
+	defer clientConn.Close()
+	defer agentConn.Close()
+	if err := agentConn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	rpc, err := NewStreamRPC(clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rpc.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() {
+		var result struct{}
+		finished <- rpc.Call(ctx, "session/load", map[string]any{"sessionId": "session-1"}, &result)
+	}()
+	_ = readRPCLine(t, bufio.NewReader(agentConn))
+	cancel()
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, ErrRPCStreamClosed) {
+			t.Fatalf("cancelled session/load returned unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled session/load blocked")
+	}
+	if err := rpc.Notify(context.Background(), "session/cancel", nil); !errors.Is(err, ErrRPCStreamClosed) {
+		t.Fatalf("cancelled RPC left connection reusable: %v", err)
+	}
+}
