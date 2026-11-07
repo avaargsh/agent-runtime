@@ -16,7 +16,7 @@ import (
 func harnessFixture(t *testing.T) (*pgxpool.Pool, *postgres.Store, acp.SessionClaim) {
 	t.Helper()
 	pool, store := newTestStore(t)
-	receipt, err := store.AcceptIntent(context.Background(), testIntent())
+	receipt, err := store.AcceptIntentWithPrincipal(context.Background(), testIntent(), trustedSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func harnessFixture(t *testing.T) (*pgxpool.Pool, *postgres.Store, acp.SessionCl
 		TenantID: "tenant-1", RunID: receipt.RunID,
 		AttemptID:         "22222222-2222-4222-8222-222222222222",
 		HarnessInstanceID: "worker-codex-1", AgentReleaseID: "release-1",
-		PolicyRevision: "policy-rev-1", RequestDigest: "sha256:" + strings.Repeat("a", 64),
+		PolicyRevision: trustedSnapshot().PolicyRevision, RequestDigest: "sha256:" + strings.Repeat("a", 64),
 		WorkingDir: "/workspace/project",
 	}
 }
