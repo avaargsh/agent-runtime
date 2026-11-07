@@ -58,6 +58,7 @@ func main() {
 		Client:       decision.Client{Endpoint: endpoint},
 		Breakers:     store,
 		Runs:         store,
+		Principals:   store,
 		PollInterval: 250 * time.Millisecond,
 	})
 	if err := w.Run(worker.InterruptCh()); err != nil {
