@@ -55,14 +55,14 @@ func (s *fakeStore) LookupBinding(_ context.Context, _, _ string) (Binding, erro
 }
 
 func confirmedBinding() Binding {
-	return Binding{TenantID: "tenant-a", RunID: "run-1", AttemptID: "attempt-1", AgentSessionID: "agent-session-1", WorkingDir: "/workspace", Confirmed: true}
+	return Binding{TenantID: "tenant-a", RunID: "run-1", AttemptID: "attempt-1", HarnessInstanceID: "worker-codex-1", AgentSessionID: "agent-session-1", WorkingDir: "/workspace", Confirmed: true}
 }
 
 func readyClient(t *testing.T, load bool) (*Client, *fakeRPC, *fakeStore) {
 	t.Helper()
 	rpc := &fakeRPC{version: 1, load: load}
 	store := &fakeStore{binding: confirmedBinding()}
-	c, err := NewClient(rpc, store)
+	c, err := NewClient(rpc, store, "worker-codex-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestInitializeProtocolV1DoesNotAdvertisePrivilegedCapabilities(t *testing.T
 
 func TestUnsupportedV2CannotBeUsed(t *testing.T) {
 	rpc := &fakeRPC{version: 2, load: true}
-	c, _ := NewClient(rpc, &fakeStore{binding: confirmedBinding()})
+	c, _ := NewClient(rpc, &fakeStore{binding: confirmedBinding()}, "worker-codex-1")
 	if _, err := c.Initialize(context.Background()); !errors.Is(err, ErrUnsupportedVersion) {
 		t.Fatalf("unexpected: %v", err)
 	}
@@ -119,6 +119,8 @@ func TestRecoverUsesOnlyCommittedTenantBoundBinding(t *testing.T) {
 		{"missing-session", func(b *Binding) { b.AgentSessionID = "" }},
 		{"relative-cwd", func(b *Binding) { b.WorkingDir = "relative/path" }},
 		{"missing-attempt", func(b *Binding) { b.AttemptID = "" }},
+		{"wrong-harness-instance", func(b *Binding) { b.HarnessInstanceID = "worker-claude-2" }},
+		{"missing-harness-instance", func(b *Binding) { b.HarnessInstanceID = "" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, rpc, store := readyClient(t, true)
@@ -185,6 +187,17 @@ func TestCancelIsNotificationNotTermination(t *testing.T) {
 	}
 }
 
+func TestNewClientRejectsMissingHarnessIdentity(t *testing.T) {
+	rpc := &fakeRPC{version: 1, load: true}
+	store := &fakeStore{binding: confirmedBinding()}
+	for _, bad := range []string{"", " ", "worker\\nother"} {
+		client, err := NewClient(rpc, store, bad)
+		if client != nil || !errors.Is(err, ErrInvalidConfiguration) {
+			t.Fatalf("unsafe Harness instance identity accepted: %q, client=%v err=%v", bad, client, err)
+		}
+	}
+}
+
 func TestNewClientRejectsTypedNilDependencies(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -197,7 +210,7 @@ func TestNewClientRejectsTypedNilDependencies(t *testing.T) {
 		{"typed nil binding store", &fakeRPC{}, (*fakeStore)(nil)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client, err := NewClient(tc.rpc, tc.store)
+			client, err := NewClient(tc.rpc, tc.store, "worker-codex-1")
 			if client != nil || !errors.Is(err, ErrInvalidConfiguration) {
 				t.Fatalf("invalid ACP v1 dependencies accepted: client=%v err=%v", client, err)
 			}
