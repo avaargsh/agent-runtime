@@ -90,9 +90,9 @@ type Client struct {
 	rpc               RPC
 	store             BindingStore
 	harnessInstanceID string
-	mu    sync.RWMutex
-	ready bool
-	caps  Capabilities
+	mu                sync.RWMutex
+	ready             bool
+	caps              Capabilities
 }
 
 // Interfaces containing typed-nil pointers are non-nil interface values.
