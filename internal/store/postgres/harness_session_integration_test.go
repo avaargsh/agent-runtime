@@ -386,7 +386,7 @@ func TestHarnessClaimRequiresPersistedACPPrincipalSnapshot(t *testing.T) {
 	}
 	claim := acp.SessionClaim{
 		TenantID: "tenant-1", RunID: receipt.RunID,
-		AttemptID: "22222222-2222-4222-8222-222222222222",
+		AttemptID:         "22222222-2222-4222-8222-222222222222",
 		HarnessInstanceID: "worker-codex-1", AgentReleaseID: "release-1",
 		PolicyRevision: "policy-revision-1", RequestDigest: testIntent().RequestDigest,
 		WorkingDir: "/workspace/project",
