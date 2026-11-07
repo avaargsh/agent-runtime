@@ -42,6 +42,7 @@ func TestInvokeDecisionRejectsBreakerTripBeforeFirstPoll(t *testing.T) {
 		Breakers:     store,
 		Client:       flipBreakerBeforeReturn{store: store, next: opened},
 		Runs:         testRunIdentityReader(),
+		Principals:   testPrincipalReader(),
 		PollInterval: time.Hour,
 	}
 	_, err = activity.InvokeDecision(context.Background(), activityTurn())
@@ -76,6 +77,7 @@ func TestInvokeDecisionFailsClosedWhenPostInvocationBreakerReadFails(t *testing.
 		Breakers:     store,
 		Client:       loseBreakerStoreOnReturn{store: store},
 		Runs:         testRunIdentityReader(),
+		Principals:   testPrincipalReader(),
 		PollInterval: time.Hour,
 	}
 	_, err := activity.InvokeDecision(context.Background(), activityTurn())
