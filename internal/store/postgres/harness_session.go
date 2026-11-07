@@ -15,6 +15,7 @@ import (
 
 // ClaimHarnessSession is an idempotent PostgreSQL-only pre-dispatch claim.
 // It MUST be called only with verified Runtime/ACP identity and policy context.
+// A matching persisted ACP principal/policy snapshot is also required.
 // Its presence never authorizes any Agent tool, terminal or EngageGuard effect.
 func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim) (acp.SessionClaimRecord, error) {
 	if s == nil || s.pool == nil {
@@ -23,7 +24,7 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 	if err := claim.Validate(); err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
-	claimTable, runTable, err := s.harnessRelations()
+	claimTable, runTable, principalTable, err := s.harnessRelations()
 	if err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
@@ -38,10 +39,16 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 		WHERE r.tenant_id = $1 AND r.run_id = $2::uuid
 			AND r.agent_release_id = $5 AND r.source_request_digest = $7
 			AND r.status = 'RUNNING'
+			AND EXISTS (
+				SELECT 1 FROM %s AS p
+				WHERE p.tenant_id=r.tenant_id AND p.run_id=r.run_id
+					AND p.snapshot_version='acp-principal/v1'
+					AND p.policy_revision=$6
+			)
 		FOR SHARE OF r
 		ON CONFLICT (tenant_id, run_id) DO NOTHING
 		RETURNING run_id::text
-	`, claimTable, runTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&insertedRunID)
 	if err == nil {
 		return acp.SessionClaimRecord{SessionClaim: claim, State: acp.ClaimPrepared, Created: true}, nil
@@ -68,7 +75,7 @@ func (s *Store) ReadHarnessSessionClaim(ctx context.Context, claim acp.SessionCl
 	if err := claim.Validate(); err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
-	claimTable, _, err := s.harnessRelations()
+	claimTable, _, _, err := s.harnessRelations()
 	if err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
@@ -104,7 +111,8 @@ func (s *Store) ReadHarnessSessionClaim(ctx context.Context, claim acp.SessionCl
 // BeginHarnessSessionDispatch irreversibly claims the one allowed initial
 // session/new attempt. Persist UNKNOWN BEFORE any external call. If the
 // transaction ACK is lost, a later read is UNKNOWN and grants no new dispatch.
-// Only the caller receiving (true, nil) may call session/new once.
+// Only a matching persisted ACP principal/policy and the caller receiving
+// (true, nil) may call session/new once.
 func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.SessionClaim) (bool, error) {
 	if s == nil || s.pool == nil {
 		return false, run.ErrRepositoryUnavailable
@@ -112,7 +120,7 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 	if err := claim.Validate(); err != nil {
 		return false, err
 	}
-	claimTable, runTable, err := s.harnessRelations()
+	claimTable, runTable, principalTable, err := s.harnessRelations()
 	if err != nil {
 		return false, err
 	}
@@ -127,9 +135,15 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 			AND EXISTS (SELECT 1 FROM %s r WHERE r.tenant_id=c.tenant_id
 				AND r.run_id=c.run_id AND r.agent_release_id=c.agent_release_id
 				AND r.source_request_digest=c.request_digest AND r.status='RUNNING'
+				AND EXISTS (
+					SELECT 1 FROM %s AS p
+					WHERE p.tenant_id=r.tenant_id AND p.run_id=r.run_id
+						AND p.snapshot_version='acp-principal/v1'
+						AND p.policy_revision=c.policy_revision
+				)
 				FOR SHARE OF r)
 		RETURNING c.run_id::text
-	`, claimTable, runTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&runID)
 	if err == nil {
 		return true, nil
@@ -162,7 +176,7 @@ func (s *Store) ConfirmHarnessSession(ctx context.Context, claim acp.SessionClai
 	if !validAgentSessionID(agentSessionID) {
 		return acp.SessionClaimRecord{}, acp.ErrBindingInvalid
 	}
-	claimTable, _, err := s.harnessRelations()
+	claimTable, _, _, err := s.harnessRelations()
 	if err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
