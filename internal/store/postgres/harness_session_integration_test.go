@@ -267,8 +267,12 @@ func TestHarnessClaimMigrationVersionAndReapply(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
 	var count int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_schema_migrations WHERE version IN (6,7)").Scan(&count); err != nil || count != 2 {
-		t.Fatalf("required v6 Outbox and v7 Harness migrations missing: %d %v", count, err)
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_schema_migrations WHERE version IN (6,7,8)").Scan(&count); err != nil || count != 3 {
+		t.Fatalf("required v6 Outbox, v7 Principal and v8 Harness migrations missing: %d %v", count, err)
+	}
+	var principals, harness string
+	if err := pool.QueryRow(ctx, "SELECT coalesce(to_regclass('runtime_run_principal_snapshots')::text, ''), coalesce(to_regclass('runtime_harness_session_claims')::text, '')").Scan(&principals, &harness); err != nil || principals == "" || harness == "" {
+		t.Fatalf("both principal and Harness authorities must exist: principal=%q harness=%q err=%v", principals, harness, err)
 	}
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatalf("repeat migration: %v", err)
