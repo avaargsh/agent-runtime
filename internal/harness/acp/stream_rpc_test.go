@@ -321,7 +321,9 @@ func TestStreamRPCCancelAfterSendRetiresConnection(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancelled session/load blocked")
 	}
-	if err := rpc.Notify(context.Background(), "session/cancel", nil); !errors.Is(err, ErrRPCStreamClosed) {
+	// The retired stream retains its cancellation cause. A second call with
+	// a fresh context cannot dispatch, whether the sentinel or cause is returned.
+	if err := rpc.Notify(context.Background(), "session/cancel", nil); !errors.Is(err, ErrRPCStreamClosed) && !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled RPC left connection reusable: %v", err)
 	}
 }
