@@ -296,7 +296,7 @@ func TestHarnessSessionClaimCannotRaceUncommittedRunCancellation(t *testing.T) {
 	}
 	type result struct {
 		record acp.SessionClaimRecord
-		err error
+		err    error
 	}
 	out := make(chan result, 1)
 	go func() {
@@ -306,10 +306,7 @@ func TestHarnessSessionClaimCannotRaceUncommittedRunCancellation(t *testing.T) {
 	// Give the concurrent SQL statement time to enter PostgreSQL while the
 	// cancelling transaction holds its row lock. The operation must eventually
 	// observe the committed cancellation, not a stale pre-lock snapshot.
-	select {
-	case <-out:
-	case <-time.After(150 * time.Millisecond):
-	}
+	time.Sleep(150 * time.Millisecond)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +343,7 @@ func TestHarnessDispatchCannotRaceUncommittedRunCancellation(t *testing.T) {
 	}
 	type result struct {
 		allowed bool
-		err error
+		err     error
 	}
 	out := make(chan result, 1)
 	go func() {
