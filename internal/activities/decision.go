@@ -16,6 +16,7 @@ var (
 	ErrBreakerGuardUnavailable = errors.New("Run breaker guard is unavailable")
 	ErrRunIdentityUnavailable  = errors.New("trusted Run identity resolver is unavailable")
 	ErrRunIdentityMismatch     = errors.New("Workflow Run identity does not match persisted Runtime identity")
+	ErrRunPrincipalUnavailable = errors.New("trusted Runtime principal snapshot is unavailable")
 )
 
 type DecisionInvoker interface {
@@ -30,10 +31,15 @@ type RunIdentityReader interface {
 	GetRunIdentity(ctx context.Context, runID string) (run.Identity, error)
 }
 
+type RunPrincipalReader interface {
+	GetRunPrincipalSnapshot(context.Context, string, string) (run.PrincipalSnapshot, error)
+}
+
 type Activities struct {
 	Client       DecisionInvoker
 	Breakers     BreakerReader
 	Runs         RunIdentityReader
+	Principals   RunPrincipalReader
 	PollInterval time.Duration
 }
 
@@ -61,6 +67,19 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 	}
 	if identity.RunID != turn.RunID || identity.TenantID != turn.TenantID || identity.AgentID != turn.AgentID {
 		return empty, nonRetryableRunIdentityError(ErrRunIdentityMismatch)
+	}
+	if a.Principals == nil {
+		return empty, ErrRunPrincipalUnavailable
+	}
+	// Resolve principal only from the authoritative Runtime store after
+	// canonical Run identity resolution; never use untrusted Workflow input.
+	// This is a necessary-only gate, not a policy decision or audit receipt.
+	principal, err := a.Principals.GetRunPrincipalSnapshot(ctx, identity.TenantID, identity.RunID)
+	if err != nil {
+		return empty, nonRetryableRunPrincipalError(err)
+	}
+	if err := principal.Validate(); err != nil {
+		return empty, nonRetryableRunPrincipalError(err)
 	}
 
 	initial, err := a.Breakers.GetRunBreaker(ctx, identity.TenantID, identity.RunID)
@@ -149,6 +168,14 @@ func nonRetryableBreakerError(cause error) error {
 	return temporal.NewNonRetryableApplicationError(
 		"Run circuit breaker blocked or interrupted Decision Activity",
 		"RUN_BREAKER_BLOCKED",
+		cause,
+	)
+}
+
+func nonRetryableRunPrincipalError(cause error) error {
+	return temporal.NewNonRetryableApplicationError(
+		"Decision Activity cannot execute without an immutable trusted Run principal",
+		"RUN_PRINCIPAL_UNAVAILABLE",
 		cause,
 	)
 }
