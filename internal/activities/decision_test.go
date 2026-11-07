@@ -9,6 +9,7 @@ import (
 
 	"github.com/avaargsh/agent-runtime/internal/breaker"
 	"github.com/avaargsh/agent-runtime/internal/decision"
+	"github.com/avaargsh/agent-runtime/internal/run"
 )
 
 type fakeBreakerStore struct {
@@ -52,13 +53,37 @@ func (s *fakeBreakerStore) callCount() int {
 	return s.calls
 }
 
+type fakeRunIdentityReader struct {
+	identity run.Identity
+	err      error
+	calls    int
+}
+
+func (r *fakeRunIdentityReader) GetRunIdentity(_ context.Context, _ string) (run.Identity, error) {
+	r.calls++
+	if r.err != nil {
+		return run.Identity{}, r.err
+	}
+	return r.identity, nil
+}
+
+func testRunIdentityReader() *fakeRunIdentityReader {
+	return &fakeRunIdentityReader{identity: run.Identity{
+		RunID:          "run-001",
+		TenantID:       "tenant-001",
+		AgentID:        "agent-001",
+		AgentReleaseID: "release-001",
+		SessionID:      "session-001",
+	}}
+}
+
 type fakeDecisionInvoker struct {
 	mu      sync.Mutex
 	calls   int
 	started chan struct{}
 }
 
-func (f *fakeDecisionInvoker) Invoke(ctx context.Context, turn decision.Turn) (decision.Result, error) {
+func (f *fakeDecisionInvoker) Invoke(ctx context.Context, turn decision.Turn, _ run.Identity) (decision.Result, error) {
 	f.mu.Lock()
 	f.calls++
 	f.mu.Unlock()
@@ -73,7 +98,7 @@ type immediateDecisionInvoker struct {
 	calls int
 }
 
-func (f *immediateDecisionInvoker) Invoke(_ context.Context, turn decision.Turn) (decision.Result, error) {
+func (f *immediateDecisionInvoker) Invoke(_ context.Context, turn decision.Turn, _ run.Identity) (decision.Result, error) {
 	f.calls++
 	return decision.Result{
 		ProtocolVersion: turn.ProtocolVersion,
@@ -121,7 +146,7 @@ func TestInvokeDecisionRejectsOpenBreakerBeforeCallingClient(t *testing.T) {
 	}
 	store := &fakeBreakerStore{records: []breaker.Record{opened}}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded with OPEN Run breaker")
@@ -142,6 +167,8 @@ func TestInvokeDecisionCancelsInFlightRequestWhenBreakerOpens(t *testing.T) {
 	activity := Activities{
 		Client:       client,
 		Breakers:     store,
+		Runs:         testRunIdentityReader(),
+		Principals:   testPrincipalReader(),
 		PollInterval: time.Millisecond,
 	}
 
@@ -171,7 +198,7 @@ func TestInvokeDecisionCancelsInFlightRequestWhenBreakerOpens(t *testing.T) {
 func TestInvokeDecisionFailsClosedWhenBreakerStoreUnavailable(t *testing.T) {
 	store := &fakeBreakerStore{err: errors.New("postgres unavailable")}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded while breaker state was unavailable")
@@ -184,7 +211,7 @@ func TestInvokeDecisionFailsClosedWhenBreakerStoreUnavailable(t *testing.T) {
 func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 	store := &fakeBreakerStore{}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded without a durable Run breaker")
@@ -197,7 +224,7 @@ func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
 
 	_, err := activity.InvokeDecision(context.Background(), activityTurn())
 	if err != nil {
@@ -211,6 +238,40 @@ func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 	}
 }
 
+func TestInvokeDecisionRejectsWorkflowIdentityThatDiffersFromPersistedRun(t *testing.T) {
+	reader := testRunIdentityReader()
+	reader.identity.TenantID = "tenant-victim"
+	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
+	client := &immediateDecisionInvoker{}
+	activity := Activities{Client: client, Breakers: store, Runs: reader, Principals: testPrincipalReader()}
+
+	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
+		t.Fatal("InvokeDecision() accepted a Workflow tenant that differs from the persisted Run")
+	}
+	if reader.calls != 1 {
+		t.Fatalf("Run identity lookups = %d, want 1", reader.calls)
+	}
+	if store.callCount() != 0 {
+		t.Fatalf("breaker was read %d times before identity validation", store.callCount())
+	}
+	if client.calls != 0 {
+		t.Fatalf("Decision client called %d times after identity mismatch, want 0", client.calls)
+	}
+}
+
+func TestInvokeDecisionFailsClosedWithoutTrustedRunResolver(t *testing.T) {
+	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
+	client := &immediateDecisionInvoker{}
+	activity := Activities{Client: client, Breakers: store}
+
+	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); !errors.Is(err, ErrRunIdentityUnavailable) {
+		t.Fatalf("InvokeDecision() error = %v, want ErrRunIdentityUnavailable", err)
+	}
+	if store.callCount() != 0 || client.calls != 0 {
+		t.Fatalf("untrusted path reached breaker/client: breaker=%d client=%d", store.callCount(), client.calls)
+	}
+}
+
 type stopAwareBreakerStore struct {
 	record      breaker.Record
 	pollStarted chan struct{}
@@ -220,8 +281,7 @@ type stopAwareBreakerStore struct {
 func (s *stopAwareBreakerStore) GetRunBreaker(ctx context.Context, tenantID, runID string) (breaker.Record, error) {
 	s.calls++
 	if s.calls == 2 {
-		// Model the in-flight poll whose context is canceled on successful
-		// completion. A later postflight read must remain usable.
+		// Preserve the canceled watcher read; the postflight read is fresh.
 		close(s.pollStarted)
 		<-ctx.Done()
 		return breaker.Record{}, ctx.Err()
@@ -233,7 +293,7 @@ type waitForPollInvoker struct {
 	pollStarted <-chan struct{}
 }
 
-func (i waitForPollInvoker) Invoke(_ context.Context, turn decision.Turn) (decision.Result, error) {
+func (i waitForPollInvoker) Invoke(_ context.Context, turn decision.Turn, _ run.Identity) (decision.Result, error) {
 	<-i.pollStarted
 	return decision.Result{
 		ProtocolVersion: turn.ProtocolVersion,
@@ -251,6 +311,8 @@ func TestInvokeDecisionIgnoresWatcherQueryCancelledByNormalCompletion(t *testing
 	activity := Activities{
 		Client:       waitForPollInvoker{pollStarted: store.pollStarted},
 		Breakers:     store,
+		Runs:         testRunIdentityReader(),
+		Principals:   testPrincipalReader(),
 		PollInterval: time.Millisecond,
 	}
 

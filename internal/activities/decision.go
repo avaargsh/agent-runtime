@@ -8,38 +8,81 @@ import (
 
 	"github.com/avaargsh/agent-runtime/internal/breaker"
 	"github.com/avaargsh/agent-runtime/internal/decision"
+	"github.com/avaargsh/agent-runtime/internal/run"
 	"go.temporal.io/sdk/temporal"
 )
 
-var ErrBreakerGuardUnavailable = errors.New("Run breaker guard is unavailable")
+var (
+	ErrBreakerGuardUnavailable = errors.New("Run breaker guard is unavailable")
+	ErrRunIdentityUnavailable  = errors.New("trusted Run identity resolver is unavailable")
+	ErrRunIdentityMismatch     = errors.New("Workflow Run identity does not match persisted Runtime identity")
+	ErrRunPrincipalUnavailable = errors.New("trusted Runtime principal snapshot is unavailable")
+)
 
 type DecisionInvoker interface {
-	Invoke(ctx context.Context, turn decision.Turn) (decision.Result, error)
+	Invoke(ctx context.Context, turn decision.Turn, identity run.Identity) (decision.Result, error)
 }
 
 type BreakerReader interface {
 	GetRunBreaker(ctx context.Context, tenantID, runID string) (breaker.Record, error)
 }
 
+type RunIdentityReader interface {
+	GetRunIdentity(ctx context.Context, runID string) (run.Identity, error)
+}
+
+type RunPrincipalReader interface {
+	GetRunPrincipalSnapshot(context.Context, string, string) (run.PrincipalSnapshot, error)
+}
+
 type Activities struct {
 	Client       DecisionInvoker
 	Breakers     BreakerReader
+	Runs         RunIdentityReader
+	Principals   RunPrincipalReader
 	PollInterval time.Duration
 }
 
-// InvokeDecision checks the durable Run breaker before external egress and
-// watches the same fencing epoch while the HTTP request is in flight. A state
-// transition invalidates the Activity even when the breaker is later recovered.
+// InvokeDecision resolves canonical identity from the Runtime Run store before
+// breaker checks or external egress. Workflow-supplied tenant/Agent fields are
+// correlation claims only and must match the persisted Run row.
 func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (decision.Result, error) {
 	var empty decision.Result
 	if a == nil || a.Client == nil || a.Breakers == nil {
 		return empty, ErrBreakerGuardUnavailable
 	}
+	if a.Runs == nil {
+		return empty, ErrRunIdentityUnavailable
+	}
 	if err := turn.Validate(); err != nil {
 		return empty, err
 	}
 
-	initial, err := a.Breakers.GetRunBreaker(ctx, turn.TenantID, turn.RunID)
+	identity, err := a.Runs.GetRunIdentity(ctx, turn.RunID)
+	if err != nil {
+		return empty, fmt.Errorf("resolve persisted Runtime Run identity: %w", err)
+	}
+	if err := identity.Validate(); err != nil {
+		return empty, nonRetryableRunIdentityError(err)
+	}
+	if identity.RunID != turn.RunID || identity.TenantID != turn.TenantID || identity.AgentID != turn.AgentID {
+		return empty, nonRetryableRunIdentityError(ErrRunIdentityMismatch)
+	}
+	if a.Principals == nil {
+		return empty, ErrRunPrincipalUnavailable
+	}
+	// Resolve principal only from the authoritative Runtime store after
+	// canonical Run identity resolution; never use untrusted Workflow input.
+	// This is a necessary-only gate, not a policy decision or audit receipt.
+	principal, err := a.Principals.GetRunPrincipalSnapshot(ctx, identity.TenantID, identity.RunID)
+	if err != nil {
+		return empty, nonRetryableRunPrincipalError(err)
+	}
+	if err := principal.Validate(); err != nil {
+		return empty, nonRetryableRunPrincipalError(err)
+	}
+
+	initial, err := a.Breakers.GetRunBreaker(ctx, identity.TenantID, identity.RunID)
 	if err != nil {
 		return empty, nonRetryableBreakerError(fmt.Errorf("load Run breaker before Decision egress: %w", err))
 	}
@@ -66,7 +109,7 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 			case <-watchCtx.Done():
 				return
 			case <-ticker.C:
-				current, err := a.Breakers.GetRunBreaker(watchCtx, turn.TenantID, turn.RunID)
+				current, err := a.Breakers.GetRunBreaker(watchCtx, identity.TenantID, identity.RunID)
 				if err != nil {
 					if watchCtx.Err() != nil {
 						return
@@ -90,7 +133,7 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 		}
 	}()
 
-	result, invokeErr := a.Client.Invoke(requestCtx, turn)
+	result, invokeErr := a.Client.Invoke(requestCtx, turn, identity)
 	stopWatcher()
 	cancelRequest()
 	<-watcherDone
@@ -103,11 +146,9 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 	if ctx.Err() != nil {
 		return empty, ctx.Err()
 	}
-	// A fast Decision response can complete before the periodic watcher makes
-	// its first query. Recheck the durable breaker/epoch after the response
-	// before accepting it or exposing a potentially retryable plugin error.
-	// The outer context remains live; the watcher context has been canceled.
-	postflight, err := a.Breakers.GetRunBreaker(ctx, turn.TenantID, turn.RunID)
+	// Fast replies may beat the first periodic poll. Revalidate the breaker
+	// fencing epoch using the persisted Runtime Run identity after egress.
+	postflight, err := a.Breakers.GetRunBreaker(ctx, identity.TenantID, identity.RunID)
 	if err != nil {
 		return empty, nonRetryableBreakerError(fmt.Errorf("load Run breaker after Decision egress: %w", err))
 	}
@@ -127,6 +168,22 @@ func nonRetryableBreakerError(cause error) error {
 	return temporal.NewNonRetryableApplicationError(
 		"Run circuit breaker blocked or interrupted Decision Activity",
 		"RUN_BREAKER_BLOCKED",
+		cause,
+	)
+}
+
+func nonRetryableRunPrincipalError(cause error) error {
+	return temporal.NewNonRetryableApplicationError(
+		"Decision Activity cannot execute without an immutable trusted Run principal",
+		"RUN_PRINCIPAL_UNAVAILABLE",
+		cause,
+	)
+}
+
+func nonRetryableRunIdentityError(cause error) error {
+	return temporal.NewNonRetryableApplicationError(
+		"Decision Activity rejected an untrusted or inconsistent Run identity",
+		"RUN_IDENTITY_MISMATCH",
 		cause,
 	)
 }
