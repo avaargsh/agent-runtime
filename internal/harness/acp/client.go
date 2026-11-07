@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -91,8 +92,22 @@ type Client struct {
 	caps  Capabilities
 }
 
+// Interfaces containing typed-nil pointers are non-nil interface values.
+// Reject them before the adapter can try an external RPC or durable lookup.
+func missingDependency(v any) bool {
+	if v == nil {
+		return true
+	}
+	value := reflect.ValueOf(v)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	}
+	return false
+}
+
 func NewClient(rpc RPC, store BindingStore) (*Client, error) {
-	if rpc == nil || store == nil {
+	if missingDependency(rpc) || missingDependency(store) {
 		return nil, ErrInvalidConfiguration
 	}
 	return &Client{rpc: rpc, store: store}, nil
