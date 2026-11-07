@@ -273,6 +273,14 @@ func (s *StreamRPC) handleAgentReply(message streamEnvelope) error {
 	if !validWireID(message.ID) {
 		return fmt.Errorf("%w: response without valid ID", ErrRPCStreamClosed)
 	}
+	// JSON-RPC 2.0 requires exactly one of result and error. An absent,
+	// null or contradictory response cannot be promoted to a successful
+	// Agent ACK. Retire the stream so later calls cannot rely on its state.
+	hasResult := len(message.Result) > 0 && string(message.Result) != "null"
+	hasError := len(message.Error) > 0 && string(message.Error) != "null"
+	if hasResult == hasError {
+		return fmt.Errorf("%w: malformed or ambiguous Agent response", ErrRPCStreamClosed)
+	}
 	id, err := strconv.ParseInt(string(message.ID), 10, 64)
 	if err != nil {
 		// Our outbound request IDs are always integer, never Agent strings.
