@@ -198,7 +198,7 @@ func TestHarnessClaimRejectsControlCharactersBeforeConfirm(t *testing.T) {
 	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok {
 		t.Fatalf("dispatch: %t %v", ok, err)
 	}
-	for _, sessionID := range []string{"session\\n1", "session\\r1", "session\\t1"} {
+	for _, sessionID := range []string{"session\n1", "session\r1", "session\t1"} {
 		if _, err := store.ConfirmHarnessSession(ctx, claim, sessionID); !errors.Is(err, acp.ErrBindingInvalid) {
 			t.Fatalf("control character session ID was accepted: %q: %v", sessionID, err)
 		}
