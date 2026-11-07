@@ -44,7 +44,7 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 	var binding acp.Binding
 	err = s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT c.tenant_id, c.run_id::text, c.attempt_id::text,
-			c.agent_session_id, c.working_dir
+			c.harness_instance_id, c.agent_session_id, c.working_dir
 		FROM %s AS c
 		JOIN %s AS r ON r.tenant_id=c.tenant_id AND r.run_id=c.run_id
 			AND r.agent_release_id=c.agent_release_id
@@ -58,7 +58,7 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 			AND c.state='CONFIRMED' AND c.agent_session_id IS NOT NULL
 	`, claimTable, runTable, principalTable, attemptTable), tenantID, runID).
 		Scan(&binding.TenantID, &binding.RunID, &binding.AttemptID,
-			&binding.AgentSessionID, &binding.WorkingDir)
+			&binding.HarnessInstanceID, &binding.AgentSessionID, &binding.WorkingDir)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return none, acp.ErrBindingInvalid
 	}
@@ -66,6 +66,10 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 		return none, fmt.Errorf("load confirmed Runtime Harness session: %w", err)
 	}
 	if binding.TenantID != tenantID || binding.RunID != runID ||
+		binding.HarnessInstanceID == "" || len(binding.HarnessInstanceID) > 255 ||
+		binding.HarnessInstanceID != strings.TrimSpace(binding.HarnessInstanceID) ||
+		!utf8.ValidString(binding.HarnessInstanceID) ||
+		strings.ContainsAny(binding.HarnessInstanceID, "\x00\r\n\t") ||
 		binding.AgentSessionID == "" || len(binding.AgentSessionID) > 255 ||
 		strings.TrimSpace(binding.AgentSessionID) != binding.AgentSessionID ||
 		!utf8.ValidString(binding.AgentSessionID) ||
