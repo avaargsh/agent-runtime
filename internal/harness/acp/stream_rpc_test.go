@@ -202,3 +202,56 @@ func TestStreamRPCCancelUnblocksStalledWriteAndFailsClosed(t *testing.T) {
 		t.Fatal("ambiguous cancelled write left the transport reusable")
 	}
 }
+
+func TestStreamRPCRejectsAmbiguousAgentResponseAndRetiresStream(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		reply func(any) map[string]any
+	}{
+		{"both result and error", func(id any) map[string]any {
+			return map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{},
+				"error": map[string]any{"code": -32000, "message": "failed"}}
+		}},
+		{"neither result nor error", func(id any) map[string]any {
+			return map[string]any{"jsonrpc": "2.0", "id": id}
+		}},
+		{"null result", func(id any) map[string]any {
+			return map[string]any{"jsonrpc": "2.0", "id": id, "result": nil}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clientConn, agentConn := net.Pipe()
+			defer clientConn.Close()
+			defer agentConn.Close()
+			if err := agentConn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			rpc, err := NewStreamRPC(clientConn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rpc.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			finished := make(chan error, 1)
+			go func() {
+				var response struct{}
+				finished <- rpc.Call(ctx, "initialize", map[string]any{"protocolVersion": 1}, &response)
+			}()
+			wire := bufio.NewReader(agentConn)
+			request := readRPCLine(t, wire)
+			writeRPCLine(t, agentConn, tc.reply(request["id"]))
+			select {
+			case err := <-finished:
+				if !errors.Is(err, ErrRPCStreamClosed) {
+					t.Fatalf("ambiguous response accepted: %v", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("ambiguous response blocked pending RPC")
+			}
+			if err := rpc.Notify(context.Background(), "session/cancel", nil); !errors.Is(err, ErrRPCStreamClosed) {
+				t.Fatalf("ambiguous response left connection reusable: %v", err)
+			}
+		})
+	}
+}
