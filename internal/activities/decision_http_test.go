@@ -158,7 +158,7 @@ func TestDecisionHTTPNeverSentWithoutPersistedPrincipalSnapshot(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := Activities{
-				Client:      decision.Client{Endpoint: server.URL, Protector: testDecisionProtector{}},
+				Client:     decision.Client{Endpoint: server.URL, Protector: testDecisionProtector{}},
 				Breakers:   &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}},
 				Runs:       testRunIdentityReader(),
 				Principals: tc.principals,
