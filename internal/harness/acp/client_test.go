@@ -190,7 +190,7 @@ func TestCancelIsNotificationNotTermination(t *testing.T) {
 func TestNewClientRejectsMissingHarnessIdentity(t *testing.T) {
 	rpc := &fakeRPC{version: 1, load: true}
 	store := &fakeStore{binding: confirmedBinding()}
-	for _, bad := range []string{"", " ", "worker\\nother"} {
+	for _, bad := range []string{"", " ", "worker\nother"} {
 		client, err := NewClient(rpc, store, bad)
 		if client != nil || !errors.Is(err, ErrInvalidConfiguration) {
 			t.Fatalf("unsafe Harness instance identity accepted: %q, client=%v err=%v", bad, client, err)
