@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
 )
 
@@ -120,5 +119,4 @@ func TestRuntimeStartOutboxRejectsInvalidClaimBeforeDB(t *testing.T) {
 	if err := store.AcknowledgeRuntimeStart(context.Background(), postgres.RuntimeStartLease{Owner:"worker-a"}); !errors.Is(err, postgres.ErrInvalidRuntimeStartLease) {
 		t.Fatalf("incomplete ACK accepted: %v", err)
 	}
-	_ = run.ErrInvalidRequest
 }
