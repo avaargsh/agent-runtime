@@ -48,6 +48,7 @@ type Binding struct {
 	TenantID       string
 	RunID          string
 	AttemptID      string
+	HarnessInstanceID string
 	AgentSessionID string
 	WorkingDir     string
 	Confirmed      bool
@@ -55,13 +56,14 @@ type Binding struct {
 
 func validIdentifier(v string) bool {
 	return v != "" && len(v) <= 255 && strings.TrimSpace(v) == v &&
-		utf8.ValidString(v) && !strings.ContainsRune(v, '\x00')
+		utf8.ValidString(v) && !strings.ContainsAny(v, "\x00\r\n\t")
 }
 
-func (b Binding) validate(tenantID, runID string) error {
+func (b Binding) validate(tenantID, runID, harnessInstanceID string) error {
 	if !b.Confirmed || b.TenantID != tenantID || b.RunID != runID ||
 		!validIdentifier(tenantID) || !validIdentifier(runID) ||
-		!validIdentifier(b.AttemptID) || !validIdentifier(b.AgentSessionID) ||
+		!validIdentifier(b.AttemptID) || !validIdentifier(b.HarnessInstanceID) ||
+		b.HarnessInstanceID != harnessInstanceID || !validIdentifier(b.AgentSessionID) ||
 		!filepath.IsAbs(b.WorkingDir) || !utf8.ValidString(b.WorkingDir) ||
 		strings.ContainsRune(b.WorkingDir, '\x00') {
 		return ErrBindingInvalid
@@ -87,6 +89,7 @@ const (
 type Client struct {
 	rpc   RPC
 	store BindingStore
+	harnessInstanceID string
 	mu    sync.RWMutex
 	ready bool
 	caps  Capabilities
@@ -106,11 +109,11 @@ func missingDependency(v any) bool {
 	return false
 }
 
-func NewClient(rpc RPC, store BindingStore) (*Client, error) {
-	if missingDependency(rpc) || missingDependency(store) {
+func NewClient(rpc RPC, store BindingStore, harnessInstanceID string) (*Client, error) {
+	if missingDependency(rpc) || missingDependency(store) || !validIdentifier(harnessInstanceID) {
 		return nil, ErrInvalidConfiguration
 	}
-	return &Client{rpc: rpc, store: store}, nil
+	return &Client{rpc: rpc, store: store, harnessInstanceID: harnessInstanceID}, nil
 }
 
 // Initialize requests only v1 and advertises no filesystem, terminal or
@@ -174,7 +177,7 @@ func (c *Client) Recover(ctx context.Context, tenantID, runID string) (RecoveryS
 	if err != nil {
 		return RecoveryUnknown, fmt.Errorf("ACP binding read: %w", err)
 	}
-	if err := binding.validate(tenantID, runID); err != nil {
+	if err := binding.validate(tenantID, runID, c.harnessInstanceID); err != nil {
 		return RecoveryUnknown, err
 	}
 	if !caps.LoadSession {
@@ -206,7 +209,7 @@ func (c *Client) Cancel(ctx context.Context, tenantID, runID string) (RecoverySt
 	if err != nil {
 		return RecoveryUnknown, fmt.Errorf("ACP binding read: %w", err)
 	}
-	if err := binding.validate(tenantID, runID); err != nil {
+	if err := binding.validate(tenantID, runID, c.harnessInstanceID); err != nil {
 		return RecoveryUnknown, err
 	}
 	if err := c.rpc.Notify(ctx, "session/cancel", struct {
