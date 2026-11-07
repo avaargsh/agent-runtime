@@ -123,7 +123,7 @@ func TestConfirmedPostgresBindingOverBoundedACPStreamDeniesPermission(t *testing
 		t.Fatal(err)
 	}
 	defer rpc.Close()
-	client, err := acp.NewClient(rpc, postgres.New(pool))
+	client, err := acp.NewClient(rpc, postgres.New(pool), claim.HarnessInstanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
