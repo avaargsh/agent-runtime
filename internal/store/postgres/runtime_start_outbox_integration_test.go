@@ -116,7 +116,7 @@ func TestRuntimeStartOutboxRejectsInvalidClaimBeforeDB(t *testing.T) {
 	if _, _, err := store.ClaimRuntimeStart(context.Background(), "worker-a", 0); !errors.Is(err, postgres.ErrInvalidRuntimeStartLease) {
 		t.Fatalf("zero TTL accepted: %v", err)
 	}
-	if err := store.AcknowledgeRuntimeStart(context.Background(), postgres.RuntimeStartLease{Owner:"worker-a"}); !errors.Is(err, postgres.ErrInvalidRuntimeStartLease) {
+	if err := store.AcknowledgeRuntimeStart(context.Background(), postgres.RuntimeStartLease{Owner: "worker-a"}); !errors.Is(err, postgres.ErrInvalidRuntimeStartLease) {
 		t.Fatalf("incomplete ACK accepted: %v", err)
 	}
 }
