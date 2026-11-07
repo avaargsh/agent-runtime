@@ -169,3 +169,36 @@ func writeRPCLine(t *testing.T, conn net.Conn, payload any) {
 		t.Fatal(err)
 	}
 }
+
+func TestStreamRPCCancelUnblocksStalledWriteAndFailsClosed(t *testing.T) {
+	clientConn, agentConn := net.Pipe()
+	defer agentConn.Close()
+	defer clientConn.Close()
+	// Deliberately never read the Agent end: net.Pipe.Write blocks until
+	// the peer consumes the bytes or the transport closes.
+	rpc, err := NewStreamRPC(clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rpc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		var result struct{}
+		finished <- rpc.Call(ctx, "initialize", map[string]any{"protocolVersion": 1}, &result)
+	}()
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, ErrRPCStreamClosed) {
+			t.Fatalf("stalled write must fail closed on cancellation, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ACP outbound Call hung on a non-reading Agent despite context deadline")
+	}
+	// Once a write was ambiguous, the stream must never be reused to
+	// dispatch a second command to a possibly desynchronized Agent.
+	if err := rpc.Notify(context.Background(), "session/cancel", nil); err == nil {
+		t.Fatal("ambiguous cancelled write left the transport reusable")
+	}
+}
