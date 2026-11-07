@@ -16,6 +16,21 @@ import (
 // and one Temporal start outbox row. No workflow start happens in the SQL tx.
 // Caller authentication and ACP ownership verification MUST happen upstream.
 func (s *Store) AcceptIntent(ctx context.Context, command run.IntentStartRequest) (run.IntentReceipt, error) {
+	return s.acceptIntent(ctx, command, nil)
+}
+
+// AcceptIntentWithPrincipal is reserved for an authenticated ACP workload
+// boundary. The issuer must be derived from the verified peer certificate,
+// not user input. It persists Run, immutable principal snapshot and Outbox
+// in one transaction. This does not itself authorize Decision/tool egress.
+func (s *Store) AcceptIntentWithPrincipal(ctx context.Context, command run.IntentStartRequest, principal run.PrincipalSnapshot) (run.IntentReceipt, error) {
+	if err := principal.Validate(); err != nil {
+		return run.IntentReceipt{}, err
+	}
+	return s.acceptIntent(ctx, command, &principal)
+}
+
+func (s *Store) acceptIntent(ctx context.Context, command run.IntentStartRequest, principal *run.PrincipalSnapshot) (run.IntentReceipt, error) {
 	if s == nil || s.pool == nil {
 		return run.IntentReceipt{}, run.ErrRepositoryUnavailable
 	}
@@ -51,6 +66,19 @@ func (s *Store) AcceptIntent(ctx context.Context, command run.IntentStartRequest
 		command.SessionID, idem, digestHex, workflow, string(input), now,
 		command.RunIntentID, command.RequestDigest).Scan(&storedID, &storedWorkflow)
 	if err == nil {
+		if principal != nil {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO runtime_run_principal_snapshots
+				(run_id, tenant_id, issuer_spiffe_id, snapshot_version,
+				 project_id, subject_id, actor_id, policy_revision, config_digest)
+				VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9)
+			`, storedID, command.TenantID, principal.IssuerSPIFFEID,
+				principal.Version, principal.ProjectID, principal.SubjectID,
+				principal.ActorID, principal.PolicyRevision, principal.ConfigDigest)
+			if err != nil {
+				return run.IntentReceipt{}, fmt.Errorf("insert immutable ACP principal snapshot: %w", err)
+			}
+		}
 		_, err = tx.Exec(ctx, `
            INSERT INTO runtime_outbox
            (outbox_id,tenant_id,aggregate_id,event_type,payload,created_at,available_at)
@@ -88,6 +116,36 @@ func (s *Store) AcceptIntent(ctx context.Context, command run.IntentStartRequest
 	if agent != command.AgentID || release != command.AgentReleaseID ||
 		session != command.SessionID || !sameInput {
 		return run.IntentReceipt{}, run.ErrIdempotencyConflict
+	}
+	var bound run.PrincipalSnapshot
+	err = tx.QueryRow(ctx, `
+		SELECT snapshot_version, issuer_spiffe_id, project_id, subject_id,
+		       actor_id, policy_revision, config_digest
+		FROM runtime_run_principal_snapshots
+		WHERE run_id=$1::uuid AND tenant_id=$2
+	`, receipt.RunID, command.TenantID).Scan(
+		&bound.Version, &bound.IssuerSPIFFEID, &bound.ProjectID,
+		&bound.SubjectID, &bound.ActorID, &bound.PolicyRevision, &bound.ConfigDigest,
+	)
+	if principal == nil {
+		// A legacy request cannot replay a principal-bound Run, because
+		// doing so would erase a required trust/authorization distinction.
+		if err == nil {
+			return run.IntentReceipt{}, run.ErrIdempotencyConflict
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return run.IntentReceipt{}, fmt.Errorf("verify legacy Run binding: %w", err)
+		}
+	} else {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return run.IntentReceipt{}, run.ErrIdempotencyConflict
+		}
+		if err != nil {
+			return run.IntentReceipt{}, fmt.Errorf("verify ACP principal snapshot: %w", err)
+		}
+		if bound != *principal {
+			return run.IntentReceipt{}, run.ErrIdempotencyConflict
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return run.IntentReceipt{}, fmt.Errorf("commit ACP replay: %w", err)

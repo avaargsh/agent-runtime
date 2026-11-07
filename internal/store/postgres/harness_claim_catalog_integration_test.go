@@ -72,7 +72,7 @@ func TestHarnessSessionCatalogAttestationFailsClosedOnProtectionDrift(t *testing
 				}
 			}
 			if err := store.Migrate(ctx); err == nil {
-				t.Fatal("schema v7 ledger masked dangerous Harness claim catalog drift")
+				t.Fatal("schema v8 ledger masked dangerous Harness claim catalog drift")
 			} else if !strings.Contains(err.Error(), "Harness claim catalog") {
 				t.Fatalf("unexpected migration failure, want Harness claim catalog error: %v", err)
 			}
@@ -83,6 +83,6 @@ func TestHarnessSessionCatalogAttestationFailsClosedOnProtectionDrift(t *testing
 func TestHarnessSessionCatalogAttestationAllowsIntactSchema(t *testing.T) {
 	_, store := newTestStore(t)
 	if err := store.Migrate(context.Background()); err != nil {
-		t.Fatalf("correct v7 schema should be accepted: %v", err)
+		t.Fatalf("correct v8 schema should be accepted: %v", err)
 	}
 }

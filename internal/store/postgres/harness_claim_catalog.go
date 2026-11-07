@@ -10,7 +10,7 @@ import (
 )
 
 // harnessCatalogReader accepts the schema-migration transaction so attestation
-// sees the same PostgreSQL snapshot as the v7 migration ledger.
+// sees the same PostgreSQL snapshot as the v8 migration ledger.
 type harnessCatalogReader interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
@@ -34,18 +34,18 @@ var harnessGuardSpecs = [...]harnessGuardSpec{
 	},
 }
 
-// verifyHarnessClaimCatalog ensures an existing v7 schema is not accepted only
+// verifyHarnessClaimCatalog ensures an existing v8 schema is not accepted only
 // because its migration ledger says "applied". The expected PL/pgSQL bodies
-// come from the already-committed v7 migration rather than a second hand-
+// come from the already-committed v8 migration rather than a second hand-
 // maintained copy. A change to the migration itself is outside this check.
 //
 // This is a point-in-time startup/migration attestation, NOT protection against
 // an owner changing the schema afterwards. Production still requires a
 // separately verified least-privilege role and search_path/pg_temp controls.
 func verifyHarnessClaimCatalog(ctx context.Context, db harnessCatalogReader) error {
-	migration, err := migrationFiles.ReadFile("migrations/0007_runtime_harness_session_claims.up.sql")
+	migration, err := migrationFiles.ReadFile("migrations/0008_runtime_harness_session_claims.up.sql")
 	if err != nil {
-		return fmt.Errorf("Harness claim catalog: read v7 migration: %w", err)
+		return fmt.Errorf("Harness claim catalog: read v8 migration: %w", err)
 	}
 	for _, spec := range harnessGuardSpecs {
 		expectedSource, err := harnessMigrationFunctionSource(string(migration), spec.functionName)

@@ -1,4 +1,4 @@
-# ACP v1 Harness session claim: PostgreSQL v7
+# ACP v1 Harness session claim: PostgreSQL v8
 
 Status: **Draft; repository integration slice only. No real Harness dispatch**.
 
@@ -14,7 +14,7 @@ SessionIdentity, AgentRelease and authenticated initiating principal/policy
 claims. EngageGuard remains the only protected-action Permit/Approval and
 external side-effect authority.
 
-The v7 database migration is additive, preserving migrations 0001-0006.
+The v8 database migration is additive, preserving migrations 0001-0007.
 Its table `runtime_harness_session_claims` has a tenant+Run primary key and
 tenant+Run foreign key, plus a unique confirmed Agent session per pinned
 Harness instance. Identity columns are immutable; row deletion, TRUNCATE
@@ -76,7 +76,7 @@ A transaction timeout or lost ACK does not prove the operation failed.
 ## Remaining gates before merge
 
 1. Exact-head Go 1.26 tests, PostgreSQL 17 integration, race, vet, formatting.
-2. Independent code/security review; migration v4->v5->v6->v7 upgrade receipts.
+2. Independent code/security review; migration v4->v5->v6->v8 upgrade receipts.
 3. Durable Runtime Attempt authority and trust-verified principal/AgentRelease
    snapshot, plus least-privilege catalog/trigger/search_path attestations.
 4. Safe bidirectional ACP JSON-RPC transport, process isolation, session

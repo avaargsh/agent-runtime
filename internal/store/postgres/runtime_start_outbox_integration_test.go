@@ -12,7 +12,7 @@ import (
 func TestRuntimeStartOutboxRecoverLostACKWithFence(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
-	receipt, err := store.AcceptIntent(ctx, testIntent())
+	receipt, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestRuntimeStartOutboxOnlyClaimsACPOriginatedRuns(t *testing.T) {
 func TestRuntimeStartOutboxReleaseReusesIdentityAndRejectsExpiredFence(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
-	if _, err := store.AcceptIntent(ctx, testIntent()); err != nil {
+	if _, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot()); err != nil {
 		t.Fatal(err)
 	}
 	first, found, err := store.ClaimRuntimeStart(ctx, "worker-a", time.Minute)

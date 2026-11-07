@@ -112,12 +112,14 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	// Dropping only v5's ledger while leaving v6/v7 applied is not an upgrade test.
 	for _, statement := range []string{
 		"DROP TABLE runtime_harness_session_claims",
+		"DROP TABLE runtime_run_principal_snapshots",
 		"DROP FUNCTION enforce_runtime_harness_claim_transition()",
 		"DROP FUNCTION reject_runtime_harness_claim_truncate()",
+		"DROP FUNCTION reject_runtime_principal_mutation()",
 		"DROP INDEX runtime_outbox_start_claim_idx",
 		"ALTER TABLE runtime_outbox DROP CONSTRAINT runtime_start_lease_pair",
 		"ALTER TABLE runtime_outbox DROP COLUMN lease_owner, DROP COLUMN lease_expires_at",
-		"DELETE FROM runtime_schema_migrations WHERE version IN (5, 6, 7)",
+		"DELETE FROM runtime_schema_migrations WHERE version IN (5, 6, 7, 8)",
 	} {
 		if _, err := pool.Exec(ctx, statement); err != nil {
 			t.Fatalf("rewind to v4: %s: %v", statement, err)
@@ -137,8 +139,8 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 7 {
-		t.Fatalf("migration version after upgrade = %d, want 7", version)
+	if version != 8 {
+		t.Fatalf("migration version after upgrade = %d, want 8", version)
 	}
 	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
 		t.Fatal("previously applied v4 database still permits audit TRUNCATE")
