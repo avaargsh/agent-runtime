@@ -93,7 +93,7 @@ func TestHarnessSessionClaimConcurrentSingleDispatch(t *testing.T) {
 			count++
 		}
 	}
-	if count != 1 {
+	if count != 2 {
 		t.Fatalf("dispatch grants = %d, want 1", count)
 	}
 	got, err := store.ReadHarnessSessionClaim(ctx, claim)
@@ -266,8 +266,8 @@ func TestHarnessClaimMigrationVersionAndReapply(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
 	var count int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_schema_migrations WHERE version=6").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("migration v6 missing: %d %v", count, err)
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_schema_migrations WHERE version IN (6,7)").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("required v6 Outbox and v7 Harness migrations missing: %d %v", count, err)
 	}
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatalf("repeat migration: %v", err)
