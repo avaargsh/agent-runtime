@@ -460,3 +460,61 @@ func TestHarnessClaimRejectsUnboundCurrentAttempt(t *testing.T) {
 		t.Fatalf("unbound Attempt gained a Harness creation claim: %+v err=%v", rec, err)
 	}
 }
+
+func TestHarnessConfirmedBindingStoreLookupAfterRestart(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	reader := postgres.New(pool)
+
+	// No row, PREPARED and UNKNOWN are *not* confirmed Agent sessions.
+	if _, err := reader.LookupBinding(ctx, claim.TenantID, claim.RunID); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("missing claim appeared confirmed: %v", err)
+	}
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.LookupBinding(ctx, claim.TenantID, claim.RunID); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("PREPARED claim appeared confirmed: %v", err)
+	}
+	if granted, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !granted {
+		t.Fatalf("grant: %t %v", granted, err)
+	}
+	if _, err := reader.LookupBinding(ctx, claim.TenantID, claim.RunID); !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("UNKNOWN claim appeared confirmed: %v", err)
+	}
+	const agentSessionID = "confirmed-agent-session-1"
+	if _, err := store.ConfirmHarnessSession(ctx, claim, agentSessionID); err != nil {
+		t.Fatal(err)
+	}
+	// A new Store instance represents a worker restart: no local mapping.
+	binding, err := postgres.New(pool).LookupBinding(ctx, claim.TenantID, claim.RunID)
+	if err != nil {
+		t.Fatalf("persisted binding after restart: %v", err)
+	}
+	if !binding.Confirmed || binding.TenantID != claim.TenantID ||
+		binding.RunID != claim.RunID || binding.AttemptID != claim.AttemptID ||
+		binding.AgentSessionID != agentSessionID || binding.WorkingDir != claim.WorkingDir {
+		t.Fatalf("lost or mismatched persisted binding: %+v", binding)
+	}
+	for _, tc := range []struct {
+		tenant string
+		runID  string
+	}{
+		{"other-tenant", claim.RunID},
+		{claim.TenantID, "00000000-0000-4000-8000-000000000000"},
+	} {
+		if _, err := reader.LookupBinding(ctx, tc.tenant, tc.runID); !errors.Is(err, acp.ErrBindingInvalid) {
+			t.Fatalf("wrong-identity binding lookup disclosed or authorized a session: %+v err=%v", tc, err)
+		}
+	}
+	// A cancelled Run may still need to deliver session/cancel. Its confirmed
+	// binding remains an audit fact, never new execution authority.
+	if _, err := pool.Exec(ctx, `UPDATE runs SET status='CANCELLED', updated_at=now()
+		WHERE tenant_id=$1 AND run_id=$2::uuid`, claim.TenantID, claim.RunID); err != nil {
+		t.Fatal(err)
+	}
+	afterCancel, err := reader.LookupBinding(ctx, claim.TenantID, claim.RunID)
+	if err != nil || afterCancel.AgentSessionID != agentSessionID || !afterCancel.Confirmed {
+		t.Fatalf("cancelled Run lost confirmed binding for best-effort cancel: %+v err=%v", afterCancel, err)
+	}
+}
