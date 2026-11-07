@@ -71,7 +71,7 @@ func TestACPV1AdapterUsesOnlyCommittedPostgresHarnessBinding(t *testing.T) {
 	pool, store, claim := harnessFixture(t)
 	ctx := context.Background()
 	rpc := &durableHarnessRPCProbe{}
-	client, err := acp.NewClient(rpc, store)
+	client, err := acp.NewClient(rpc, store, claim.HarnessInstanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +100,26 @@ func TestACPV1AdapterUsesOnlyCommittedPostgresHarnessBinding(t *testing.T) {
 	if _, err := store.ConfirmHarnessSession(ctx, claim, "agent-session-durable"); err != nil {
 		t.Fatal(err)
 	}
+	// A second Harness connection with an instance-local matching session ID
+	// must not read or cancel the first instance's durable session.
+	wrongRPC := &durableHarnessRPCProbe{}
+	wrongClient, err := acp.NewClient(wrongRPC, store, "worker-claude-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wrongClient.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := wrongClient.Recover(ctx, claim.TenantID, claim.RunID); status != acp.RecoveryUnknown || !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("cross-Harness instance session/load accepted: status=%s err=%v", status, err)
+	}
+	if status, err := wrongClient.Cancel(ctx, claim.TenantID, claim.RunID); status != acp.RecoveryUnknown || !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("cross-Harness instance session/cancel accepted: status=%s err=%v", status, err)
+	}
+	if !reflect.DeepEqual(wrongRPC.methods, []string{"initialize"}) || len(wrongRPC.notifications) != 0 {
+		t.Fatalf("cross-Harness instance invoked external session: %+v", wrongRPC)
+	}
+
 	status, err := client.Recover(ctx, claim.TenantID, claim.RunID)
 	if err != nil || status != acp.RecoveryLoaded ||
 		!reflect.DeepEqual(rpc.methods, []string{"initialize", "session/load"}) ||
