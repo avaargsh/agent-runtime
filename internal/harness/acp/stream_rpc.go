@@ -97,6 +97,13 @@ func (s *StreamRPC) Call(ctx context.Context, method string, params any, result 
 	s.pending[id] = resultCh
 	s.mu.Unlock()
 
+	// A blocked Write on an uncooperative Agent cannot be interrupted by
+	// selecting on ctx.Done after send returns. Close the entire stream on
+	// cancellation: a partially written frame has an ambiguous outcome and
+	// must never be followed by another command on the same connection.
+	stopCancellation := context.AfterFunc(ctx, func() { s.fail(ctx.Err()) })
+	defer stopCancellation()
+
 	frame := map[string]any{
 		"jsonrpc": "2.0", "id": id, "method": method, "params": params,
 	}
@@ -131,6 +138,10 @@ func (s *StreamRPC) Notify(ctx context.Context, method string, params any) error
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Notify also performs a potentially blocking Write. Treat cancelled
+	// delivery as UNKNOWN and retire the connection, never as a sent ACK.
+	stopCancellation := context.AfterFunc(ctx, func() { s.fail(ctx.Err()) })
+	defer stopCancellation()
 	return s.send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 }
 
