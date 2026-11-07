@@ -444,3 +444,13 @@ func TestHarnessDispatchRejectsUnboundOrMismatchedPersistedPrincipal(t *testing.
 		t.Fatalf("untrusted dispatch changed state: %+v err=%v", rec, err)
 	}
 }
+
+func TestHarnessClaimRejectsUnboundCurrentAttempt(t *testing.T) {
+	// A tenant-bound RUNNING Run and trusted Principal alone are insufficient:
+	// AttemptID is otherwise merely caller-supplied and can be invented.
+	_, store, claim := harnessFixture(t)
+	rec, err := store.ClaimHarnessSession(context.Background(), claim)
+	if !errors.Is(err, acp.ErrBindingInvalid) || rec.Created {
+		t.Fatalf("unbound Attempt gained a Harness creation claim: %+v err=%v", rec, err)
+	}
+}
