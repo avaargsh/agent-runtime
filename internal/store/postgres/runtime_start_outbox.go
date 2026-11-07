@@ -49,9 +49,12 @@ func (s *Store) ClaimRuntimeStart(ctx context.Context, owner string, ttl time.Du
 			SELECT o.outbox_id
 			FROM runtime_outbox AS o
 			JOIN runs AS r ON r.run_id = o.aggregate_id AND r.tenant_id = o.tenant_id
+			JOIN runtime_run_principal_snapshots AS p
+			  ON p.run_id = r.run_id AND p.tenant_id = r.tenant_id
 			WHERE o.event_type = 'RUN_START_REQUESTED'
 			  AND r.run_intent_id IS NOT NULL
 			  AND r.source_request_digest IS NOT NULL
+			  AND p.snapshot_version = 'acp-principal/v1'
 			  AND r.workflow_id = 'agent-run/v1/' || r.run_id::text
 			  AND o.payload->>'tenant_id' = r.tenant_id
 			  AND o.payload->>'run_id' = r.run_id::text
