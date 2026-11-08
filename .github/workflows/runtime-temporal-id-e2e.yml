@@ -1,0 +1,51 @@
+name: Runtime Temporal ID persistence (test-only)
+
+on:
+  pull_request:
+    paths:
+      - "internal/store/postgres/runtime_temporal_e2e_test.go"
+      - "internal/store/postgres/runtime_start_outbox*"
+      - "internal/store/postgres/migrations/0006_runtime_start_outbox_leases.up.sql"
+      - ".github/workflows/runtime-temporal-id-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  temporal-restart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: agent_runtime_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agent_runtime_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/agent_runtime_test?sslmode=disable
+      RUNTIME_TEMPORAL_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.26.10'
+      - name: Verify patched Go toolchain
+        run: test "$(go env GOVERSION)" = "go1.26.10"
+      - name: Real Temporal Server + Worker restart, durable Workflow ID and PostgreSQL fencing
+        run: go test -race -count=1 -v -run '^TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity$' ./internal/store/postgres
+
+# Uses pinned Temporal CLI v1.10.0 with a file-backed SQLite dev server.
+# The test Workflow does not invoke Decision, external tools or protected
+# side effects. This does not bypass ACP subject/actor/policy gate G01/G05.

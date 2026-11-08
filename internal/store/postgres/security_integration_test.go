@@ -104,6 +104,25 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
 
+	// Reproduce a database genuinely stopped at v4: remove new v8,
+	// v7 and v6 schema elements before reapplying their migrations.
+	for _, sql := range []string{
+		"DROP TABLE runtime_decision_turns",
+		"DROP TABLE runtime_run_attempts",
+		"DROP FUNCTION reject_runtime_execution_identity_mutation()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 8",
+		"DROP TABLE runtime_run_principal_snapshots",
+		"DROP FUNCTION reject_runtime_principal_mutation()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 7",
+		"DROP INDEX runtime_outbox_start_claim_idx",
+		"ALTER TABLE runtime_outbox DROP CONSTRAINT runtime_start_lease_pair",
+		"ALTER TABLE runtime_outbox DROP COLUMN lease_owner, DROP COLUMN lease_expires_at",
+		"DELETE FROM runtime_schema_migrations WHERE version = 6",
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatalf("simulate original v4 state: %v", err)
+		}
+	}
 	if _, err := pool.Exec(ctx, `DROP TRIGGER runtime_security_audit_no_truncate ON runtime_security_audit_events`); err != nil {
 		t.Fatalf("simulate original v4 schema without TRUNCATE guard: %v", err)
 	}
@@ -124,8 +143,8 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 5 {
-		t.Fatalf("migration version after upgrade = %d, want 5", version)
+	if version != 8 {
+		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 8", version)
 	}
 	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
 		t.Fatal("previously applied v4 database still permits audit TRUNCATE")
