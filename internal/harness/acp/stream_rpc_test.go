@@ -142,6 +142,64 @@ func TestStreamRPCOversizeResponseFailsPendingCallClosed(t *testing.T) {
 	}
 }
 
+// Duplicate top-level JSON-RPC ACK keys are ambiguous even when their values
+// match: encoding/json silently keeps the last occurrence. A malicious Agent
+// must not be able to turn that ambiguity into a confirmed session/load.
+func TestStreamRPCDuplicateTopLevelACKFieldsFailClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		frame string
+	}{
+		{"duplicate-result", `{"jsonrpc":"2.0","id":__ID__,"result":{},"result":{}}`},
+		{"duplicate-id", `{"jsonrpc":"2.0","id":__ID__,"id":__ID__,"result":{}}`},
+		{"duplicate-version", `{"jsonrpc":"2.0","jsonrpc":"2.0","id":__ID__,"result":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clientConn, agentConn := net.Pipe()
+			defer clientConn.Close()
+			defer agentConn.Close()
+			if err := agentConn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			rpc, err := NewStreamRPC(clientConn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rpc.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			finished := make(chan error, 1)
+			go func() {
+				var reply struct{}
+				finished <- rpc.Call(ctx, "session/load", map[string]any{
+					"sessionId": "existing-session",
+				}, &reply)
+			}()
+			request := readRPCLine(t, bufio.NewReader(agentConn))
+			id, err := json.Marshal(request["id"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := strings.ReplaceAll(tc.frame, "__ID__", string(id)) + "\n"
+			if _, err := agentConn.Write([]byte(raw)); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-finished:
+				if !errors.Is(err, ErrRPCStreamClosed) {
+					t.Fatalf("ambiguous Agent ACK was accepted: %v", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("ambiguous Agent ACK did not close the pending RPC")
+			}
+			if err := rpc.Notify(context.Background(), "session/cancel", nil); !errors.Is(err, ErrRPCStreamClosed) {
+				t.Fatalf("ambiguous ACK left StreamRPC reusable: %v", err)
+			}
+		})
+	}
+}
+
 func readRPCLine(t *testing.T, reader *bufio.Reader) map[string]any {
 	t.Helper()
 	data, err := reader.ReadBytes('\n')
