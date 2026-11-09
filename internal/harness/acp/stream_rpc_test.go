@@ -153,6 +153,7 @@ func TestStreamRPCDuplicateTopLevelACKFieldsFailClosed(t *testing.T) {
 		{"duplicate-result", `{"jsonrpc":"2.0","id":__ID__,"result":{},"result":{}}`},
 		{"duplicate-id", `{"jsonrpc":"2.0","id":__ID__,"id":__ID__,"result":{}}`},
 		{"duplicate-version", `{"jsonrpc":"2.0","jsonrpc":"2.0","id":__ID__,"result":{}}`},
+		{"nested-duplicate-version", `{"jsonrpc":"2.0","id":__ID__,"result":{"protocolVersion":2,"protocolVersion":1}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clientConn, agentConn := net.Pipe()
