@@ -2,12 +2,14 @@ package acp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -190,7 +192,7 @@ func (s *StreamRPC) readLoop() {
 	reader.Buffer(make([]byte, 4096), MaxACPFrameBytes+1)
 	for reader.Scan() {
 		var message streamEnvelope
-		if err := json.Unmarshal(reader.Bytes(), &message); err != nil {
+		if err := decodeUniqueStreamEnvelope(reader.Bytes(), &message); err != nil {
 			s.fail(fmt.Errorf("%w: malformed Agent JSON: %v", ErrRPCStreamClosed, err))
 			return
 		}
@@ -215,6 +217,52 @@ func (s *StreamRPC) readLoop() {
 		return
 	}
 	s.fail(fmt.Errorf("%w: Agent stream ended", ErrRPCStreamClosed))
+}
+
+// decodeUniqueStreamEnvelope rejects ambiguous top-level JSON-RPC keys
+// before encoding/json's last-value-wins struct decoding. An untrusted Agent
+// must not turn duplicate response IDs/results into a confirmed RPC ACK.
+func decodeUniqueStreamEnvelope(raw []byte, out *streamEnvelope) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	open, err := decoder.Token()
+	if err != nil || open != json.Delim('{') {
+		return errors.New("Agent JSON-RPC envelope must be an object")
+	}
+	seen := make(map[string]struct{}, 6)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return errors.New("invalid Agent JSON-RPC field")
+		}
+		// Go's struct decoder also accepts case-folded field aliases. Reserve
+		// the JSON-RPC field names with their exact protocol spelling.
+		switch strings.ToLower(key) {
+		case "jsonrpc", "id", "method", "params", "result", "error":
+			if key != strings.ToLower(key) {
+				return errors.New("noncanonical Agent JSON-RPC field")
+			}
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return errors.New("duplicate Agent JSON-RPC field")
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+	}
+	end, err := decoder.Token()
+	if err != nil || end != json.Delim('}') {
+		return errors.New("invalid Agent JSON-RPC envelope terminator")
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("trailing Agent JSON-RPC envelope content")
+	}
+	return json.Unmarshal(raw, out)
 }
 
 func validWireID(id json.RawMessage) bool {
