@@ -64,7 +64,8 @@ func (b Binding) validate(tenantID, runID, harnessInstanceID string) error {
 		!validIdentifier(tenantID) || !validIdentifier(runID) ||
 		!validIdentifier(b.AttemptID) || !validIdentifier(b.HarnessInstanceID) ||
 		b.HarnessInstanceID != harnessInstanceID || !validIdentifier(b.AgentSessionID) ||
-		!filepath.IsAbs(b.WorkingDir) || !utf8.ValidString(b.WorkingDir) ||
+		!filepath.IsAbs(b.WorkingDir) || filepath.Clean(b.WorkingDir) != b.WorkingDir ||
+		!utf8.ValidString(b.WorkingDir) ||
 		strings.ContainsRune(b.WorkingDir, '\x00') {
 		return ErrBindingInvalid
 	}
