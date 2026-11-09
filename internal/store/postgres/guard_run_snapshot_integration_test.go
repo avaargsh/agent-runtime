@@ -86,6 +86,39 @@ func TestGuardRunSafetySnapshotIsTenantBoundAndFailClosed(t *testing.T) {
 	}
 }
 
+// An ACP-accepted Run carries a versioned Workflow ID, not the legacy
+// CreateOrGet prefix. Guard must read it without granting effects to QUEUED Runs.
+func TestGuardRunSafetySnapshotAcceptsACPWorkflowBinding(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	receipt, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
+	if err != nil || !receipt.Created {
+		t.Fatalf("accept principal-bound ACP Run: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.WorkflowID != run.ACPWorkflowPrefix+receipt.RunID {
+		t.Fatalf("ACP Run has incorrect persisted workflow binding: %+v", receipt)
+	}
+	queued, err := store.GetGuardRunSafetySnapshot(ctx, receipt.TenantID, receipt.RunID)
+	if err != nil {
+		t.Fatalf("ACP Run safety lookup rejected persisted workflow: %v", err)
+	}
+	if queued.Identity.RunID != receipt.RunID ||
+		queued.Identity.TenantID != receipt.TenantID ||
+		queued.Status != run.StatusQueued || queued.EligibleForGuardSubmission() {
+		t.Fatalf("ACP QUEUED Run must not authorize Guard submission: %+v", queued)
+	}
+	if _, err := store.GetGuardRunSafetySnapshot(ctx, "foreign-tenant", receipt.RunID); !errors.Is(err, run.ErrRunNotFound) {
+		t.Fatalf("ACP Run snapshot leaked tenant binding: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE runs SET status='RUNNING',updated_at=now() WHERE run_id=$1::uuid", receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
+	running, err := store.GetGuardRunSafetySnapshot(ctx, receipt.TenantID, receipt.RunID)
+	if err != nil || !running.EligibleForGuardSubmission() {
+		t.Fatalf("RUNNING ACP Run with CLOSED breaker should pass local preconditions: %+v err=%v", running, err)
+	}
+}
+
 func TestGuardRunSafetySnapshotUnavailableDoesNotAuthorize(t *testing.T) {
 	var nilStore *postgres.Store
 	if _, err := nilStore.GetGuardRunSafetySnapshot(context.Background(), "tenant-1", "00000000-0000-4000-8000-000000000611"); err == nil {
