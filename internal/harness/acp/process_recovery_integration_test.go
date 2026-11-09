@@ -206,8 +206,7 @@ func TestACPRealSubprocessKilledDuringLoadRetainsUnknown(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("lost process ACK left recovery blocked")
 	}
-	if status, err := client.Cancel(context.Background(), "tenant-a", "run-1");
-		status != RecoveryUnknown || !errors.Is(err, ErrRPCStreamClosed) {
+	if status, err := client.Cancel(context.Background(), "tenant-a", "run-1"); status != RecoveryUnknown || !errors.Is(err, ErrRPCStreamClosed) {
 		t.Fatalf("crashed Agent stream was reused for cancellation: status=%s err=%v", status, err)
 	}
 }
