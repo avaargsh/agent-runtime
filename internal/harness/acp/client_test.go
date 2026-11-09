@@ -118,6 +118,7 @@ func TestRecoverUsesOnlyCommittedTenantBoundBinding(t *testing.T) {
 		{"wrong-run", func(b *Binding) { b.RunID = "run-2" }},
 		{"missing-session", func(b *Binding) { b.AgentSessionID = "" }},
 		{"relative-cwd", func(b *Binding) { b.WorkingDir = "relative/path" }},
+		{"unclean-absolute-cwd", func(b *Binding) { b.WorkingDir = "/workspace/../etc" }},
 		{"missing-attempt", func(b *Binding) { b.AttemptID = "" }},
 		{"wrong-harness-instance", func(b *Binding) { b.HarnessInstanceID = "worker-claude-2" }},
 		{"missing-harness-instance", func(b *Binding) { b.HarnessInstanceID = "" }},
