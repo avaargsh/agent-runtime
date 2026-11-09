@@ -36,11 +36,13 @@ func (s *Store) GetGuardRunSafetySnapshot(
 	}
 
 	var workflowID string
+	var acpBound bool
 	var breakerState pgtype.Text
 	var breakerEpoch, breakerVersion pgtype.Int8
 	err = s.pool.QueryRow(ctx, `
 		SELECT r.run_id::text, r.tenant_id, r.agent_id,
-			r.agent_release_id, r.session_id, r.workflow_id, r.status,
+			r.agent_release_id, r.session_id, r.workflow_id,
+			(r.run_intent_id IS NOT NULL), r.status,
 			b.state, b.epoch, b.version
 		FROM runs r
 		LEFT JOIN runtime_circuit_breakers b
@@ -49,7 +51,7 @@ func (s *Store) GetGuardRunSafetySnapshot(
 	`, tenantID, canonical.String()).Scan(
 		&result.Identity.RunID, &result.Identity.TenantID,
 		&result.Identity.AgentID, &result.Identity.AgentReleaseID,
-		&result.Identity.SessionID, &workflowID, &result.Status,
+		&result.Identity.SessionID, &workflowID, &acpBound, &result.Status,
 		&breakerState, &breakerEpoch, &breakerVersion,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -61,9 +63,15 @@ func (s *Store) GetGuardRunSafetySnapshot(
 	if err := result.Identity.Validate(); err != nil {
 		return run.GuardRunSafetySnapshot{}, fmt.Errorf("persisted Run identity invalid: %w", err)
 	}
+	// A persisted ACP RunIntent owns the versioned Workflow namespace. Do not
+	// accept either prefix indiscriminately: that would hide corrupt bindings.
+	expectedWorkflowID := run.WorkflowIDPrefix + result.Identity.RunID
+	if acpBound {
+		expectedWorkflowID = run.ACPWorkflowPrefix + result.Identity.RunID
+	}
 	if result.Identity.TenantID != tenantID ||
 		result.Identity.RunID != canonical.String() ||
-		workflowID != run.WorkflowIDPrefix+result.Identity.RunID {
+		workflowID != expectedWorkflowID {
 		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: persisted Run/workflow binding inconsistent", run.ErrInvalidIdentity)
 	}
 	switch result.Status {
