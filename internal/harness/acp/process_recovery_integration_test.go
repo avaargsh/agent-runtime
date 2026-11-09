@@ -71,7 +71,7 @@ func TestACPSubprocessHarnessFixture(t *testing.T) {
 	send(map[string]any{
 		"jsonrpc": "2.0", "id": initialize["id"],
 		"result": map[string]any{
-			"protocolVersion": 1,
+			"protocolVersion":   1,
 			"agentCapabilities": map[string]any{"loadSession": true},
 		},
 	})
@@ -88,7 +88,7 @@ func TestACPSubprocessHarnessFixture(t *testing.T) {
 		"jsonrpc": "2.0", "id": 177, "method": "session/request_permission",
 		"params": map[string]any{
 			"sessionId": "agent-session-1",
-			"options": []any{map[string]any{"optionId": "allow-once", "kind": "allow_once"}},
+			"options":   []any{map[string]any{"optionId": "allow-once", "kind": "allow_once"}},
 		},
 	})
 	permission := read()
@@ -110,7 +110,7 @@ func TestACPSubprocessHarnessFixture(t *testing.T) {
 		"jsonrpc": "2.0", "method": "session/update",
 		"params": map[string]any{
 			"sessionId": "agent-session-1",
-			"update": map[string]any{"sessionUpdate": "permission-denied-proof"},
+			"update":    map[string]any{"sessionUpdate": "permission-denied-proof"},
 		},
 	})
 	_, _ = io.Copy(io.Discard, wire)
