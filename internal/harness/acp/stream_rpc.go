@@ -223,41 +223,80 @@ func (s *StreamRPC) readLoop() {
 // before encoding/json's last-value-wins struct decoding. An untrusted Agent
 // must not turn duplicate response IDs/results into a confirmed RPC ACK.
 func decodeUniqueStreamEnvelope(raw []byte, out *streamEnvelope) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	open, err := decoder.Token()
-	if err != nil || open != json.Delim('{') {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return errors.New("Agent JSON-RPC envelope must be an object")
 	}
-	seen := make(map[string]struct{}, 6)
-	for decoder.More() {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+
+	// Validate each object (including nested initialize results) before
+	// unmarshalling the response. Go's default decoder otherwise accepts
+	// duplicate protocolVersion fields and silently takes the last value.
+	var walk func(depth int) error
+	walk = func(depth int) error {
+		if depth > 64 {
+			return errors.New("Agent JSON-RPC envelope nesting exceeded")
+		}
 		token, err := decoder.Token()
 		if err != nil {
 			return err
 		}
-		key, ok := token.(string)
+		delim, ok := token.(json.Delim)
 		if !ok {
-			return errors.New("invalid Agent JSON-RPC field")
+			return nil
 		}
-		// Go's struct decoder also accepts case-folded field aliases. Reserve
-		// the JSON-RPC field names with their exact protocol spelling.
-		switch strings.ToLower(key) {
-		case "jsonrpc", "id", "method", "params", "result", "error":
-			if key != strings.ToLower(key) {
-				return errors.New("noncanonical Agent JSON-RPC field")
+		switch delim {
+		case '{':
+			seen := make(map[string]struct{})
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return errors.New("invalid Agent JSON object key")
+				}
+				// JSON-RPC envelope fields must use their exact names.
+				// Case-insensitive struct aliases would silently collide.
+				if depth == 0 {
+					switch strings.ToLower(key) {
+					case "jsonrpc", "id", "method", "params", "result", "error":
+						if key != strings.ToLower(key) {
+							return errors.New("noncanonical Agent JSON-RPC field")
+						}
+					}
+				}
+				if _, duplicate := seen[key]; duplicate {
+					return errors.New("duplicate Agent JSON object key")
+				}
+				seen[key] = struct{}{}
+				if err := walk(depth + 1); err != nil {
+					return err
+				}
 			}
+			end, err := decoder.Token()
+			if err != nil || end != json.Delim('}') {
+				return errors.New("invalid Agent JSON object terminator")
+			}
+		case '[':
+			for decoder.More() {
+				if err := walk(depth + 1); err != nil {
+					return err
+				}
+			}
+			end, err := decoder.Token()
+			if err != nil || end != json.Delim(']') {
+				return errors.New("invalid Agent JSON array terminator")
+			}
+		default:
+			return errors.New("unexpected Agent JSON delimiter")
 		}
-		if _, duplicate := seen[key]; duplicate {
-			return errors.New("duplicate Agent JSON-RPC field")
-		}
-		seen[key] = struct{}{}
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
-			return err
-		}
+		return nil
 	}
-	end, err := decoder.Token()
-	if err != nil || end != json.Delim('}') {
-		return errors.New("invalid Agent JSON-RPC envelope terminator")
+	if err := walk(0); err != nil {
+		return err
 	}
 	if _, err := decoder.Token(); err != io.EOF {
 		return errors.New("trailing Agent JSON-RPC envelope content")
