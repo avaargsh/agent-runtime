@@ -268,6 +268,16 @@ func decodeUniqueStreamEnvelope(raw []byte, out *streamEnvelope) error {
 						}
 					}
 				}
+				// Agent negotiation fields use exact JSON spellings. Go struct
+				// decoding otherwise accepts case-folded aliases in nested
+				// initialize results and can turn v2/capability conflicts into ACKs.
+				if depth > 0 {
+					for _, canonical := range [...]string{"protocolVersion", "agentCapabilities", "loadSession"} {
+						if key != canonical && strings.EqualFold(key, canonical) {
+							return errors.New("noncanonical Agent negotiation field")
+						}
+					}
+				}
 				if _, duplicate := seen[key]; duplicate {
 					return errors.New("duplicate Agent JSON object key")
 				}
