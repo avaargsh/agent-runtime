@@ -128,7 +128,6 @@ func TestAssessRejectsUntrustedOrMalformedResults(t *testing.T) {
 	}
 }
 
-
 func TestAssessRejectsEmbeddedControlCharactersInIdentityAndEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
