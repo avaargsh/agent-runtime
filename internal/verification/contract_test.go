@@ -128,6 +128,48 @@ func TestAssessRejectsUntrustedOrMalformedResults(t *testing.T) {
 	}
 }
 
+
+func TestAssessRejectsEmbeddedControlCharactersInIdentityAndEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Manifest, *Report)
+	}{
+		{"source-revision-nul", func(m *Manifest, r *Report) {
+			m.SourceRevision = "commit\x00rev"
+			r.SourceRevision = m.SourceRevision
+		}},
+		{"tenant-newline", func(m *Manifest, r *Report) {
+			m.TenantID = "tenant\nother"
+			r.TenantID = m.TenantID
+		}},
+		{"required-check-id-nul", func(m *Manifest, r *Report) {
+			m.RequiredCheckIDs[0] = "lint\x00other"
+			r.Checks[0].ID = m.RequiredCheckIDs[0]
+		}},
+		{"evidence-id-nul", func(_ *Manifest, r *Report) {
+			r.Evidence[0].ID = "lint\x00log"
+			r.Checks[0].EvidenceIDs[0] = r.Evidence[0].ID
+		}},
+		{"evidence-uri-crlf", func(_ *Manifest, r *Report) {
+			r.Evidence[0].URI = "artifact://verified/lint\r\nX-Forged: yes"
+		}},
+		{"reason-tab", func(_ *Manifest, r *Report) {
+			r.Checks[0].Status = CheckFailed
+			r.Checks[0].Reason = "error\tforged"
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest, report := fixture()
+			tc.mutate(&manifest, &report)
+			assessment, err := Assess(manifest, report)
+			if err == nil {
+				t.Fatalf("embedded control character accepted: %+v", assessment)
+			}
+		})
+	}
+}
+
 func TestAssessFailureTakesPrecedenceOverIncomplete(t *testing.T) {
 	manifest, report := fixture()
 	manifest.RequiredCheckIDs = append(manifest.RequiredCheckIDs, "integration")
