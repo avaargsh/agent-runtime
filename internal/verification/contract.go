@@ -6,6 +6,7 @@ package verification
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 const Version = "verification/v1"
@@ -74,7 +75,7 @@ type Assessment struct {
 }
 
 func nonBlank(s string) bool {
-	return s != "" && strings.TrimSpace(s) == s
+	return s != "" && strings.TrimSpace(s) == s && strings.IndexFunc(s, unicode.IsControl) == -1
 }
 
 func sha256Hex(s string) bool {
