@@ -100,7 +100,9 @@ func (s *Store) acceptIntent(ctx context.Context, command run.IntentStartRequest
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return run.IntentReceipt{}, fmt.Errorf("insert ACP Run: %w", err)
 	}
-	receipt, err := lookupIntentRow(ctx, tx, command.TenantID, command.RunIntentID, command.RequestDigest)
+	// Acceptance must inspect the globally unique RunIntent identifier: a
+	// foreign-tenant reuse is a conflict, not permission to allocate a Run.
+	receipt, err := lookupIntentRow(ctx, tx, command.TenantID, command.RunIntentID, command.RequestDigest, false)
 	if err != nil {
 		return run.IntentReceipt{}, err
 	}
@@ -164,19 +166,29 @@ func (s *Store) LookupIntent(ctx context.Context, tenantID, intentID, digest str
 		RequestDigest: digest}).ValidateLookup(); err != nil {
 		return run.IntentReceipt{}, err
 	}
-	return lookupIntentRow(ctx, s.pool, tenantID, intentID, digest)
+	// Read-only Inspect is tenant-scoped so a foreign RunIntent identifier is
+	// indistinguishable from one that was never committed in this tenant.
+	return lookupIntentRow(ctx, s.pool, tenantID, intentID, digest, true)
 }
 
 type intentRow interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-func lookupIntentRow(ctx context.Context, q intentRow, tenantID, intentID, digest string) (run.IntentReceipt, error) {
+func lookupIntentRow(ctx context.Context, q intentRow, tenantID, intentID, digest string, tenantScoped bool) (run.IntentReceipt, error) {
 	var id, workflow, tenant, source string
-	err := q.QueryRow(ctx, `
+	query := `
         SELECT run_id::text,workflow_id,tenant_id,source_request_digest
         FROM runs WHERE run_intent_id=$1::uuid
-    `, intentID).Scan(&id, &workflow, &tenant, &source)
+    `
+	args := []any{intentID}
+	if tenantScoped {
+		// Filter at the database read boundary; post-read conflict handling
+		// would reveal that another tenant owns this RunIntent ID.
+		query += " AND tenant_id=$2"
+		args = append(args, tenantID)
+	}
+	err := q.QueryRow(ctx, query, args...).Scan(&id, &workflow, &tenant, &source)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run.IntentReceipt{}, run.ErrIntentNotFound
 	}
