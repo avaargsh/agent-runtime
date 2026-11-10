@@ -158,6 +158,39 @@ func TestAcceptIntentConcurrentSameIDHasOneRunAndOutbox(t *testing.T) {
 	}
 }
 
+func TestLookupIntentDoesNotRevealForeignTenantRunIntent(t *testing.T) {
+	_, store := newTestStore(t)
+	ctx := context.Background()
+	request := testIntent()
+	if _, err := store.AcceptIntentWithPrincipal(ctx, request, trustedSnapshot()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wrong-tenant Inspect must be indistinguishable from a missing RunIntent,
+	// even when the caller supplies the correct digest. AcceptIntent's global
+	// RunIntent idempotency conflict must remain intact separately.
+	for _, digest := range []string{
+		request.RequestDigest,
+		"sha256:" + strings.Repeat("b", 64),
+	} {
+		if _, err := store.LookupIntent(ctx, "tenant-foreign", request.RunIntentID, digest); !errors.Is(err, run.ErrIntentNotFound) {
+			t.Fatalf("cross-tenant Inspect leaked Run existence for digest %q: %v", digest, err)
+		}
+	}
+	// A real same-tenant digest mismatch remains a reconciliation conflict.
+	if _, err := store.LookupIntent(ctx, request.TenantID, request.RunIntentID,
+		"sha256:"+strings.Repeat("b", 64)); !errors.Is(err, run.ErrIdempotencyConflict) {
+		t.Fatalf("same-tenant digest conflict was hidden: %v", err)
+	}
+	// An authenticated but foreign-tenant StartRun must not create a second
+	// Run using the existing globally unique RunIntent identifier.
+	foreign := request
+	foreign.TenantID = "tenant-foreign"
+	if _, err := store.AcceptIntentWithPrincipal(ctx, foreign, trustedSnapshot()); !errors.Is(err, run.ErrIdempotencyConflict) {
+		t.Fatalf("foreign-tenant StartRun re-used a canonical RunIntent id: %v", err)
+	}
+}
+
 func TestLookupIntentDoesNotClaimFinalAbsence(t *testing.T) {
 	_, store := newTestStore(t)
 	_, err := store.LookupIntent(context.Background(), "tenant-1", sampleIntentID, testIntent().RequestDigest)
