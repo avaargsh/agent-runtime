@@ -239,7 +239,7 @@ func TestAssessRejectsOversizedManifestAndReport(t *testing.T) {
 			manifest, report := fixture()
 			tc.mutate(&manifest, &report)
 			assessment, err := Assess(manifest, report)
-			if err == nil || assessment != (Assessment{}) {
+			if err == nil || assessment.Verdict != "" || len(assessment.MissingRequired) != 0 {
 				t.Fatalf("oversized/malformed verification accepted: %+v err=%v", assessment, err)
 			}
 		})
