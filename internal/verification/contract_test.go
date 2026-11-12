@@ -227,8 +227,8 @@ func TestAssessRejectsOversizedManifestAndReport(t *testing.T) {
 		{"too-many-evidence-references", func(_ *Manifest, r *Report) {
 			for i := 0; i < 1024; i++ {
 				r.Evidence = append(r.Evidence, EvidenceRef{
-					ID: fmt.Sprintf("extra-%d", i),
-					URI: "artifact://verified/extra",
+					ID:     fmt.Sprintf("extra-%d", i),
+					URI:    "artifact://verified/extra",
 					SHA256: strings.Repeat("a", 64),
 				})
 			}
