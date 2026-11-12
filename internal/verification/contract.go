@@ -11,6 +11,16 @@ import (
 
 const Version = "verification/v1"
 
+// These limits bound the work and memory consumed by unauthenticated report
+// content before any future persistence or toolchain integration.
+const (
+	maxIdentityBytes   = 256
+	maxCheckCount      = 256
+	maxEvidenceCount   = 1024
+	maxEvidenceURIBytes = 2048
+	maxReasonBytes     = 1024
+)
+
 type CheckStatus string
 
 const (
@@ -78,6 +88,10 @@ func nonBlank(s string) bool {
 	return s != "" && strings.TrimSpace(s) == s && strings.IndexFunc(s, unicode.IsControl) == -1
 }
 
+func boundedNonBlank(s string, maxBytes int) bool {
+	return len(s) <= maxBytes && nonBlank(s)
+}
+
 func sha256Hex(s string) bool {
 	if len(s) != 64 {
 		return false
@@ -98,7 +112,10 @@ func Assess(m Manifest, r Report) (Assessment, error) {
 	if m.SchemaVersion != Version || r.SchemaVersion != Version {
 		return zero, fmt.Errorf("unsupported verification schema version")
 	}
-	if !nonBlank(m.TenantID) || !nonBlank(m.RunID) || !nonBlank(m.AttemptID) || !nonBlank(m.SourceRevision) {
+	if !boundedNonBlank(m.TenantID, maxIdentityBytes) ||
+		!boundedNonBlank(m.RunID, maxIdentityBytes) ||
+		!boundedNonBlank(m.AttemptID, maxIdentityBytes) ||
+		!boundedNonBlank(m.SourceRevision, maxIdentityBytes) {
 		return zero, fmt.Errorf("missing trusted manifest identity")
 	}
 	if !sha256Hex(m.EnvironmentDigest) || !sha256Hex(m.ManifestDigest) {
@@ -110,12 +127,13 @@ func Assess(m Manifest, r Report) (Assessment, error) {
 		return zero, fmt.Errorf("verification report identity or manifest mismatch")
 	}
 
-	if len(m.RequiredCheckIDs) == 0 {
-		return zero, fmt.Errorf("manifest has no required checks")
+	if len(m.RequiredCheckIDs) == 0 || len(m.RequiredCheckIDs) > maxCheckCount ||
+		len(r.Checks) > maxCheckCount || len(r.Evidence) > maxEvidenceCount {
+		return zero, fmt.Errorf("verification report exceeds supported check/evidence bounds")
 	}
 	required := make(map[string]struct{}, len(m.RequiredCheckIDs))
 	for _, id := range m.RequiredCheckIDs {
-		if !nonBlank(id) {
+		if !boundedNonBlank(id, maxIdentityBytes) {
 			return zero, fmt.Errorf("blank required check id")
 		}
 		if _, duplicate := required[id]; duplicate {
@@ -126,7 +144,8 @@ func Assess(m Manifest, r Report) (Assessment, error) {
 
 	evidence := make(map[string]struct{}, len(r.Evidence))
 	for _, e := range r.Evidence {
-		if !nonBlank(e.ID) || !nonBlank(e.URI) || !sha256Hex(e.SHA256) {
+		if !boundedNonBlank(e.ID, maxIdentityBytes) ||
+			!boundedNonBlank(e.URI, maxEvidenceURIBytes) || !sha256Hex(e.SHA256) {
 			return zero, fmt.Errorf("malformed evidence reference")
 		}
 		if _, duplicate := evidence[e.ID]; duplicate {
@@ -139,6 +158,10 @@ func Assess(m Manifest, r Report) (Assessment, error) {
 	failed := false
 	incomplete := false
 	for _, check := range r.Checks {
+		if len(check.EvidenceIDs) > maxEvidenceCount ||
+			(check.Reason != "" && !boundedNonBlank(check.Reason, maxReasonBytes)) {
+			return zero, fmt.Errorf("check %q has oversized or malformed fields", check.ID)
+		}
 		if _, ok := required[check.ID]; !ok {
 			return zero, fmt.Errorf("unknown or blank check id %q", check.ID)
 		}
