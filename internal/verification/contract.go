@@ -14,11 +14,11 @@ const Version = "verification/v1"
 // These limits bound the work and memory consumed by unauthenticated report
 // content before any future persistence or toolchain integration.
 const (
-	maxIdentityBytes   = 256
-	maxCheckCount      = 256
-	maxEvidenceCount   = 1024
+	maxIdentityBytes    = 256
+	maxCheckCount       = 256
+	maxEvidenceCount    = 1024
 	maxEvidenceURIBytes = 2048
-	maxReasonBytes     = 1024
+	maxReasonBytes      = 1024
 )
 
 type CheckStatus string
