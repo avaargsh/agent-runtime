@@ -1,6 +1,7 @@
 package verification
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -180,5 +181,67 @@ func TestAssessFailureTakesPrecedenceOverIncomplete(t *testing.T) {
 	}
 	if result.Verdict != VerdictFailed || len(result.MissingRequired) != 1 {
 		t.Fatalf("report proven failure and uncovered checks separately: %#v", result)
+	}
+}
+
+func TestAssessRejectsOversizedManifestAndReport(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Manifest, *Report)
+	}{
+		{"oversized-tenant", func(m *Manifest, r *Report) {
+			m.TenantID = strings.Repeat("x", 257)
+			r.TenantID = m.TenantID
+		}},
+		{"oversized-source-revision", func(m *Manifest, r *Report) {
+			m.SourceRevision = strings.Repeat("x", 257)
+			r.SourceRevision = m.SourceRevision
+		}},
+		{"oversized-required-check-id", func(m *Manifest, r *Report) {
+			m.RequiredCheckIDs[0] = strings.Repeat("x", 257)
+			r.Checks[0].ID = m.RequiredCheckIDs[0]
+		}},
+		{"oversized-evidence-id", func(_ *Manifest, r *Report) {
+			r.Evidence[0].ID = strings.Repeat("x", 257)
+			r.Checks[0].EvidenceIDs[0] = r.Evidence[0].ID
+		}},
+		{"oversized-evidence-uri", func(_ *Manifest, r *Report) {
+			r.Evidence[0].URI = "artifact://" + strings.Repeat("x", 2048)
+		}},
+		{"oversized-reason-even-when-passed", func(_ *Manifest, r *Report) {
+			r.Checks[0].Reason = strings.Repeat("x", 1025)
+		}},
+		{"control-character-in-passed-reason", func(_ *Manifest, r *Report) {
+			r.Checks[0].Reason = "passed\nforge"
+		}},
+		{"too-many-required-checks", func(m *Manifest, _ *Report) {
+			for i := 0; i < 256; i++ {
+				m.RequiredCheckIDs = append(m.RequiredCheckIDs, fmt.Sprintf("extra-%d", i))
+			}
+		}},
+		{"too-many-reported-checks", func(_ *Manifest, r *Report) {
+			for i := 0; i < 256; i++ {
+				r.Checks = append(r.Checks, r.Checks[0])
+			}
+		}},
+		{"too-many-evidence-references", func(_ *Manifest, r *Report) {
+			for i := 0; i < 1024; i++ {
+				r.Evidence = append(r.Evidence, EvidenceRef{
+					ID: fmt.Sprintf("extra-%d", i),
+					URI: "artifact://verified/extra",
+					SHA256: strings.Repeat("a", 64),
+				})
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest, report := fixture()
+			tc.mutate(&manifest, &report)
+			assessment, err := Assess(manifest, report)
+			if err == nil || assessment != (Assessment{}) {
+				t.Fatalf("oversized/malformed verification accepted: %+v err=%v", assessment, err)
+			}
+		})
 	}
 }
