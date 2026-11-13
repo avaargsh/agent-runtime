@@ -55,7 +55,7 @@ func (s *fakeStore) LookupBinding(_ context.Context, _, _ string) (Binding, erro
 }
 
 func confirmedBinding() Binding {
-	return Binding{TenantID: "tenant-a", RunID: "run-1", AttemptID: "attempt-1", HarnessInstanceID: "worker-codex-1", AgentSessionID: "agent-session-1", WorkingDir: "/workspace", Confirmed: true}
+	return Binding{TenantID: "tenant-a", RunID: "run-1", RunStatus: "RUNNING", AttemptID: "attempt-1", HarnessInstanceID: "worker-codex-1", AgentSessionID: "agent-session-1", WorkingDir: "/workspace", Confirmed: true}
 }
 
 func readyClient(t *testing.T, load bool) (*Client, *fakeRPC, *fakeStore) {
@@ -132,6 +132,28 @@ func TestRecoverUsesOnlyCommittedTenantBoundBinding(t *testing.T) {
 			}
 			if len(rpc.methods) != 1 {
 				t.Fatal("unexpected external operation")
+			}
+		})
+	}
+}
+
+func TestRecoverRejectsNonRunningRunButPreservesCancellation(t *testing.T) {
+	for _, state := range []string{"", "ACCEPTED", "CANCELLED", "COMPLETED", "FAILED"} {
+		t.Run(state, func(t *testing.T) {
+			c, rpc, store := readyClient(t, true)
+			store.binding.RunStatus = state
+			status, err := c.Recover(context.Background(), "tenant-a", "run-1")
+			if status != RecoveryUnknown || !errors.Is(err, ErrBindingInvalid) {
+				t.Fatalf("unsafe recovery of %q Run: status=%s err=%v", state, status, err)
+			}
+			if !reflect.DeepEqual(rpc.methods, []string{"initialize"}) {
+				t.Fatalf("non-RUNNING Run sent ACP method: %v", rpc.methods)
+			}
+			if state == "CANCELLED" {
+				status, err := c.Cancel(context.Background(), "tenant-a", "run-1")
+				if status != CancelSent || err != nil || !reflect.DeepEqual(rpc.methods, []string{"initialize", "session/cancel"}) {
+					t.Fatalf("CANCELLED Run lost safe cancel notification: status=%s err=%v methods=%v", status, err, rpc.methods)
+				}
 			}
 		})
 	}

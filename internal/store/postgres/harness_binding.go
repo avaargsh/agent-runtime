@@ -43,7 +43,7 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 	}
 	var binding acp.Binding
 	err = s.pool.QueryRow(ctx, fmt.Sprintf(`
-		SELECT c.tenant_id, c.run_id::text, c.attempt_id::text,
+		SELECT c.tenant_id, c.run_id::text, r.status, c.attempt_id::text,
 			c.harness_instance_id, c.agent_session_id, c.working_dir
 		FROM %s AS c
 		JOIN %s AS r ON r.tenant_id=c.tenant_id AND r.run_id=c.run_id
@@ -57,7 +57,7 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 		WHERE c.tenant_id=$1 AND c.run_id=$2::uuid
 			AND c.state='CONFIRMED' AND c.agent_session_id IS NOT NULL
 	`, claimTable, runTable, principalTable, attemptTable), tenantID, runID).
-		Scan(&binding.TenantID, &binding.RunID, &binding.AttemptID,
+		Scan(&binding.TenantID, &binding.RunID, &binding.RunStatus, &binding.AttemptID,
 			&binding.HarnessInstanceID, &binding.AgentSessionID, &binding.WorkingDir)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return none, acp.ErrBindingInvalid
