@@ -45,8 +45,8 @@ type BindingStore interface {
 // Confirmed means session/new was durably bound after a confirmed response;
 // it says nothing about the outcome of a later session/prompt.
 type Binding struct {
-	TenantID          string
-	RunID             string
+	TenantID string
+	RunID    string
 	// RunStatus is sampled from authoritative Runtime storage at lookup time.
 	// It is not an external execution grant or a fence against later cancellation.
 	RunStatus         string
