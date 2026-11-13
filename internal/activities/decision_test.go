@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/avaargsh/agent-runtime/internal/audit"
 	"github.com/avaargsh/agent-runtime/internal/breaker"
 	"github.com/avaargsh/agent-runtime/internal/decision"
 	"github.com/avaargsh/agent-runtime/internal/run"
@@ -69,7 +70,7 @@ func (r *fakeRunIdentityReader) GetRunIdentity(_ context.Context, _ string) (run
 
 func testRunIdentityReader() *fakeRunIdentityReader {
 	return &fakeRunIdentityReader{identity: run.Identity{
-		RunID:          "run-001",
+		RunID:          temporalTestRunID,
 		TenantID:       "tenant-001",
 		AgentID:        "agent-001",
 		AgentReleaseID: "release-001",
@@ -120,16 +121,22 @@ func activityTurn() decision.Turn {
 		InvocationID:    "invocation-001",
 		TenantID:        "tenant-001",
 		AgentID:         "agent-001",
-		RunID:           "run-001",
+		RunID:           temporalTestRunID,
 		TurnID:          "turn-001",
 		UserInput:       "hello",
 	}
 }
 
+type activityAuditRecorder struct{}
+
+func (activityAuditRecorder) Append(context.Context, audit.Event) error { return nil }
+
+func testAuditRecorder() audit.Recorder { return activityAuditRecorder{} }
+
 func closedRunBreaker(t *testing.T) breaker.Record {
 	t.Helper()
 	record, err := breaker.NewClosed(
-		breaker.Scope{Kind: breaker.ScopeRun, ID: "run-001"},
+		breaker.Scope{Kind: breaker.ScopeRun, ID: temporalTestRunID},
 		time.Date(2026, 11, 4, 17, 0, 0, 0, time.UTC),
 	)
 	if err != nil {
@@ -168,7 +175,9 @@ func TestInvokeDecisionCancelsInFlightRequestWhenBreakerOpens(t *testing.T) {
 		Client:       client,
 		Breakers:     store,
 		Runs:         testRunIdentityReader(),
-		Principals:   testPrincipalReader(),
+		Principals: testPrincipalReader(),
+		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 		PollInterval: time.Millisecond,
 	}
 
@@ -312,7 +321,9 @@ func TestInvokeDecisionIgnoresWatcherQueryCancelledByNormalCompletion(t *testing
 		Client:       waitForPollInvoker{pollStarted: store.pollStarted},
 		Breakers:     store,
 		Runs:         testRunIdentityReader(),
-		Principals:   testPrincipalReader(),
+		Principals: testPrincipalReader(),
+		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 		PollInterval: time.Millisecond,
 	}
 

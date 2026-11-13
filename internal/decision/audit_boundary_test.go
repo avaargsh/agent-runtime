@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/avaargsh/agent-runtime/internal/audit"
-	"github.com/avaargsh/agent-runtime/internal/dataprotection"
 	"github.com/avaargsh/agent-runtime/internal/securitycontext"
 )
 
@@ -39,6 +38,10 @@ func (r *boundaryAuditRecorder) snapshot() []audit.Event {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]audit.Event(nil), r.events...)
+}
+
+func auditedClient(endpoint string, protector DataProtector) Client {
+	return Client{Endpoint: endpoint, Protector: protector, Audit: &boundaryAuditRecorder{}}
 }
 
 func decisionAuditContext(t *testing.T) context.Context {
@@ -130,4 +133,3 @@ func TestDecisionClientRejectsMissingSecurityContextBeforeAuditAndEgress(t *test
 }
 
 var _ audit.Recorder = (*boundaryAuditRecorder)(nil)
-var _ dataprotection.Scope

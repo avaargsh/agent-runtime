@@ -63,7 +63,7 @@ func TestDecisionEgressRejectsMissingOrInvalidDurablePrincipal(t *testing.T) {
 			if err == nil {
 				t.Fatal("unverified principal reached egress")
 			}
-			if reader.calls != 1 || reader.tenantID != "tenant-001" || reader.runID != "run-001" {
+			if reader.calls != 1 || reader.tenantID != "tenant-001" || reader.runID != temporalTestRunID {
 				t.Fatalf("principal lookup failed to use persisted Run identity: %+v", reader)
 			}
 			if client.calls != 0 || breakers.callCount() != 0 {
@@ -76,7 +76,12 @@ func TestDecisionEgressRejectsMissingOrInvalidDurablePrincipal(t *testing.T) {
 func TestDecisionEgressWithBoundSnapshotPreservesRunCorrelation(t *testing.T) {
 	client := &immediateDecisionInvoker{}
 	reader := &principalFixtureReader{snapshot: validPrincipalFixture()}
-	a := Activities{Client: client, Breakers: &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}, Runs: testRunIdentityReader(), Principals: reader}
+	a := Activities{
+		Client: client, Breakers: &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}},
+		Runs: testRunIdentityReader(), Principals: reader,
+		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
 	if _, err := a.InvokeDecision(context.Background(), activityTurn()); err != nil {
 		t.Fatalf("valid persisted principal blocked: %v", err)
 	}
