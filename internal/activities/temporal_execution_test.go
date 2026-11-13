@@ -69,9 +69,9 @@ func (i *identityCapturingInvoker) Invoke(ctx context.Context, turn decision.Tur
 	i.security, i.hasSec = securitycontext.FromContext(ctx)
 	return decision.Result{
 		ProtocolVersion: turn.ProtocolVersion,
-		InvocationID: turn.InvocationID,
-		Kind: "final_response",
-		Text: "ok",
+		InvocationID:    turn.InvocationID,
+		Kind:            "final_response",
+		Text:            "ok",
 	}, nil
 }
 
@@ -84,7 +84,7 @@ func temporalTestIdentityReader() *fakeRunIdentityReader {
 
 func temporalTestExecution() TemporalExecution {
 	return TemporalExecution{
-		WorkflowID: run.ACPWorkflowPrefix + temporalTestRunID,
+		WorkflowID:  run.ACPWorkflowPrefix + temporalTestRunID,
 		ExecutionID: temporalTestExecutionID,
 	}
 }
@@ -92,12 +92,12 @@ func temporalTestExecution() TemporalExecution {
 func temporalTestTurnIdentity() run.TemporalTurnIdentity {
 	return run.TemporalTurnIdentity{
 		TenantID: "tenant-001", RunID: temporalTestRunID,
-		WorkflowID: run.ACPWorkflowPrefix + temporalTestRunID,
+		WorkflowID:          run.ACPWorkflowPrefix + temporalTestRunID,
 		TemporalExecutionID: temporalTestExecutionID,
-		RunAttemptID: temporalTestAttemptID,
-		TurnID: temporalTestTurnID,
-		InvocationID: temporalTestTurnID,
-		TurnIndex: 1,
+		RunAttemptID:        temporalTestAttemptID,
+		TurnID:              temporalTestTurnID,
+		InvocationID:        temporalTestTurnID,
+		TurnIndex:           1,
 	}
 }
 
@@ -118,11 +118,11 @@ func TestInvokeDecisionBindsTemporalServerExecutionAndReplacesWorkflowIDs(t *tes
 	execution := &fixedTemporalExecutionResolver{execution: temporalTestExecution()}
 	turns := &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()}
 	activity := Activities{
-		Client: invoker,
-		Breakers: &fakeBreakerStore{records: []breaker.Record{temporalTestBreaker(t)}},
-		Runs: temporalTestIdentityReader(),
-		Principals: testPrincipalReader(),
-		Execution: execution,
+		Client:        invoker,
+		Breakers:      &fakeBreakerStore{records: []breaker.Record{temporalTestBreaker(t)}},
+		Runs:          temporalTestIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     execution,
 		TemporalTurns: turns,
 	}
 
@@ -161,7 +161,7 @@ func TestInvokeDecisionBindsTemporalServerExecutionAndReplacesWorkflowIDs(t *tes
 func TestInvokeDecisionRejectsTemporalWorkflowMismatchBeforeEgress(t *testing.T) {
 	invoker := &identityCapturingInvoker{}
 	execution := &fixedTemporalExecutionResolver{execution: TemporalExecution{
-		WorkflowID: "agent-run/v1/some-other-run",
+		WorkflowID:  "agent-run/v1/some-other-run",
 		ExecutionID: temporalTestExecutionID,
 	}}
 	turns := &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()}
@@ -183,23 +183,23 @@ func TestInvokeDecisionRejectsTemporalWorkflowMismatchBeforeEgress(t *testing.T)
 
 func TestInvokeDecisionFailsClosedWhenTemporalExecutionOrTurnPersistenceIsUnavailable(t *testing.T) {
 	cases := []struct {
-		name string
+		name      string
 		execution *fixedTemporalExecutionResolver
-		turns *fixedTemporalTurnWriter
+		turns     *fixedTemporalTurnWriter
 	}{
 		{
-			name: "missing execution resolver",
-			turns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+			name:  "missing execution resolver",
+			turns:     &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 		},
 		{
-			name: "execution metadata unavailable",
+			name:      "execution metadata unavailable",
 			execution: &fixedTemporalExecutionResolver{err: errors.New("Temporal activity metadata unavailable")},
 			turns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 		},
 		{
-			name: "turn persistence unavailable",
+			name:      "turn persistence unavailable",
 			execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
-			turns: &fixedTemporalTurnWriter{err: errors.New("PostgreSQL unavailable")},
+			turns:     &fixedTemporalTurnWriter{err: errors.New("PostgreSQL unavailable")},
 		},
 	}
 	for _, tc := range cases {

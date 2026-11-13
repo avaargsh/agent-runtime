@@ -92,12 +92,12 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 			Audit:     testAuditRecorder(),
 			HTTP:      &http.Client{Timeout: 5 * time.Second, Transport: server.Client().Transport},
 		},
-		Breakers:     store,
-		Runs:         testRunIdentityReader(),
-		Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Breakers:      store,
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
-		PollInterval: 5 * time.Millisecond,
+		PollInterval:  5 * time.Millisecond,
 	}
 
 	var suite testsuite.WorkflowTestSuite

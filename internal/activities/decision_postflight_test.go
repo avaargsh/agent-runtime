@@ -39,13 +39,13 @@ func TestInvokeDecisionRejectsBreakerTripBeforeFirstPoll(t *testing.T) {
 	}
 	store := &fakeBreakerStore{records: []breaker.Record{closed}}
 	activity := Activities{
-		Breakers:     store,
-		Client:       flipBreakerBeforeReturn{store: store, next: opened},
-		Runs:         testRunIdentityReader(),
-		Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Breakers:      store,
+		Client:        flipBreakerBeforeReturn{store: store, next: opened},
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
-		PollInterval: time.Hour,
+		PollInterval:  time.Hour,
 	}
 	_, err = activity.InvokeDecision(context.Background(), activityTurn())
 	var appErr *temporal.ApplicationError
@@ -76,13 +76,13 @@ func (f loseBreakerStoreOnReturn) Invoke(_ context.Context, turn decision.Turn, 
 func TestInvokeDecisionFailsClosedWhenPostInvocationBreakerReadFails(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	activity := Activities{
-		Breakers:     store,
-		Client:       loseBreakerStoreOnReturn{store: store},
-		Runs:         testRunIdentityReader(),
-		Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Breakers:      store,
+		Client:        loseBreakerStoreOnReturn{store: store},
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
-		PollInterval: time.Hour,
+		PollInterval:  time.Hour,
 	}
 	_, err := activity.InvokeDecision(context.Background(), activityTurn())
 	var appErr *temporal.ApplicationError

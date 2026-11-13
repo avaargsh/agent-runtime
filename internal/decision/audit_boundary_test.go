@@ -14,9 +14,9 @@ import (
 )
 
 type boundaryAuditRecorder struct {
-	mu sync.Mutex
-	events []audit.Event
-	err error
+	mu       sync.Mutex
+	events   []audit.Event
+	err      error
 	onAppend func()
 }
 
@@ -95,7 +95,7 @@ func TestDecisionClientFailsClosedWhenAuditIsMissingOrUnavailable(t *testing.T) 
 	})
 	recorderErr := errors.New("audit database unavailable")
 	for _, tc := range []struct {
-		name string
+		name     string
 		recorder *boundaryAuditRecorder
 	}{
 		{name: "missing recorder"},

@@ -79,7 +79,7 @@ func TestDecisionEgressWithBoundSnapshotPreservesRunCorrelation(t *testing.T) {
 	a := Activities{
 		Client: client, Breakers: &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}},
 		Runs: testRunIdentityReader(), Principals: reader,
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 	}
 	if _, err := a.InvokeDecision(context.Background(), activityTurn()); err != nil {

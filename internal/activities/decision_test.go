@@ -155,7 +155,7 @@ func TestInvokeDecisionRejectsOpenBreakerBeforeCallingClient(t *testing.T) {
 	client := &fakeDecisionInvoker{}
 	activity := Activities{
 		Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 	}
 
@@ -176,13 +176,13 @@ func TestInvokeDecisionCancelsInFlightRequestWhenBreakerOpens(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closed, opened}}
 	client := &fakeDecisionInvoker{started: make(chan struct{})}
 	activity := Activities{
-		Client:       client,
-		Breakers:     store,
-		Runs:         testRunIdentityReader(),
-		Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Client:        client,
+		Breakers:      store,
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
-		PollInterval: time.Millisecond,
+		PollInterval:  time.Millisecond,
 	}
 
 	result := make(chan error, 1)
@@ -212,7 +212,7 @@ func TestInvokeDecisionFailsClosedWhenBreakerStoreUnavailable(t *testing.T) {
 	store := &fakeBreakerStore{err: errors.New("postgres unavailable")}
 	client := &fakeDecisionInvoker{}
 	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 	}
 
@@ -228,7 +228,7 @@ func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 	store := &fakeBreakerStore{}
 	client := &fakeDecisionInvoker{}
 	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 	}
 
@@ -244,7 +244,7 @@ func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
 	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 	}
 
@@ -266,7 +266,7 @@ func TestInvokeDecisionRejectsWorkflowIdentityThatDiffersFromPersistedRun(t *tes
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
 	activity := Activities{Client: client, Breakers: store, Runs: reader, Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 	}
 
@@ -334,13 +334,13 @@ func TestInvokeDecisionIgnoresWatcherQueryCancelledByNormalCompletion(t *testing
 		pollStarted: make(chan struct{}),
 	}
 	activity := Activities{
-		Client:       waitForPollInvoker{pollStarted: store.pollStarted},
-		Breakers:     store,
-		Runs:         testRunIdentityReader(),
-		Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Client:        waitForPollInvoker{pollStarted: store.pollStarted},
+		Breakers:      store,
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
-		PollInterval: time.Millisecond,
+		PollInterval:  time.Millisecond,
 	}
 
 	result, err := activity.InvokeDecision(context.Background(), activityTurn())

@@ -116,14 +116,14 @@ func (c Client) Invoke(ctx context.Context, turn Turn, identity run.Identity) (R
 	}
 	payloadDigest := sha256.Sum256(payload)
 	if err := audit.AppendChecked(ctx, c.Audit, audit.Event{
-		EventID: uuid.NewString(),
-		OccurredAt: time.Now().UTC(),
-		Type: audit.EventModelRequestPrepared,
-		Identity: trustedContext,
-		Source: "agent-runtime/decision-client",
-		Action: "MODEL_REQUEST",
-		Resource: DecisionModelAudience,
-		Outcome: audit.OutcomePending,
+		EventID:       uuid.NewString(),
+		OccurredAt:    time.Now().UTC(),
+		Type:          audit.EventModelRequestPrepared,
+		Identity:      trustedContext,
+		Source:        "agent-runtime/decision-client",
+		Action:        "MODEL_REQUEST",
+		Resource:      DecisionModelAudience,
+		Outcome:       audit.OutcomePending,
 		PayloadDigest: "sha256:" + hex.EncodeToString(payloadDigest[:]),
 	}); err != nil {
 		return result, fmt.Errorf("persist model egress audit before HTTP request: %w", err)
