@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"testing"
+	"time"
 
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
@@ -15,6 +16,9 @@ func (serverExecutionProbe) ReadExecution(ctx context.Context) (TemporalExecutio
 }
 
 func resolveServerExecutionWorkflow(ctx workflow.Context) (TemporalExecution, error) {
+	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: time.Second,
+	})
 	var execution TemporalExecution
 	err := workflow.ExecuteActivity(ctx, "ReadExecution").Get(ctx, &execution)
 	return execution, err
