@@ -130,6 +130,16 @@ func TestACPV1AdapterUsesOnlyCommittedPostgresHarnessBinding(t *testing.T) {
 		WHERE tenant_id=$1 AND run_id=$2::uuid`, claim.TenantID, claim.RunID); err != nil {
 		t.Fatal(err)
 	}
+	// A durable CONFIRMED binding survives cancellation for session/cancel,
+	// but must not revive an already-cancelled Run through session/load.
+	beforeCancelledRecover := len(rpc.methods)
+	if status, err := client.Recover(ctx, claim.TenantID, claim.RunID); status != acp.RecoveryUnknown || !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("CANCELLED Run was permitted to session/load: status=%s err=%v", status, err)
+	}
+	if len(rpc.methods) != beforeCancelledRecover {
+		t.Fatalf("CANCELLED Run invoked ACP after durable read: %v", rpc.methods)
+	}
+
 	cancelStatus, err := client.Cancel(ctx, claim.TenantID, claim.RunID)
 	if err != nil || cancelStatus != acp.CancelSent ||
 		!reflect.DeepEqual(rpc.notifications, []string{"session/cancel"}) ||
