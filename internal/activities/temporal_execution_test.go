@@ -189,12 +189,12 @@ func TestInvokeDecisionFailsClosedWhenTemporalExecutionOrTurnPersistenceIsUnavai
 	}{
 		{
 			name:  "missing execution resolver",
-			turns:     &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+			turns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 		},
 		{
 			name:      "execution metadata unavailable",
 			execution: &fixedTemporalExecutionResolver{err: errors.New("Temporal activity metadata unavailable")},
-			turns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+			turns:     &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 		},
 		{
 			name:      "turn persistence unavailable",
