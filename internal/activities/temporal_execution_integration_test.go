@@ -23,7 +23,8 @@ func resolveServerExecutionWorkflow(ctx workflow.Context) (TemporalExecution, er
 func TestServerTemporalExecutionResolverReadsCurrentActivityMetadata(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.RegisterActivity(serverExecutionProbe{})
+	probe := serverExecutionProbe{}
+	env.RegisterActivity(probe.ReadExecution)
 	env.ExecuteWorkflow(resolveServerExecutionWorkflow)
 
 	if err := env.GetWorkflowError(); err != nil {
