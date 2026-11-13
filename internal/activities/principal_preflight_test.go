@@ -85,7 +85,7 @@ func TestDecisionEgressWithBoundSnapshotPreservesRunCorrelation(t *testing.T) {
 	if _, err := a.InvokeDecision(context.Background(), activityTurn()); err != nil {
 		t.Fatalf("valid persisted principal blocked: %v", err)
 	}
-	if client.calls != 1 || reader.calls != 1 || reader.tenantID != "tenant-001" || reader.runID != "run-001" {
+	if client.calls != 1 || reader.calls != 1 || reader.tenantID != "tenant-001" || reader.runID != temporalTestRunID {
 		t.Fatalf("wrong principal correlation: client=%d reader=%+v", client.calls, reader)
 	}
 }

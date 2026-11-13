@@ -153,7 +153,11 @@ func TestInvokeDecisionRejectsOpenBreakerBeforeCallingClient(t *testing.T) {
 	}
 	store := &fakeBreakerStore{records: []breaker.Record{opened}}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
+	activity := Activities{
+		Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded with OPEN Run breaker")
@@ -239,7 +243,7 @@ func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InvokeDecision() error = %v", err)
 	}
-	if store.tenantID != "tenant-001" || store.runID != "run-001" {
+	if store.tenantID != "tenant-001" || store.runID != temporalTestRunID {
 		t.Fatalf("breaker lookup identity = (%q,%q), want (tenant-001,run-001)", store.tenantID, store.runID)
 	}
 	if client.calls != 1 {

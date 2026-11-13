@@ -25,6 +25,9 @@ type fixedTemporalExecutionResolver struct {
 }
 
 func (r *fixedTemporalExecutionResolver) Resolve(_ context.Context) (TemporalExecution, error) {
+	if r == nil {
+		return TemporalExecution{}, ErrTemporalExecutionUnavailable
+	}
 	r.calls++
 	return r.execution, r.err
 }
@@ -43,6 +46,9 @@ type fixedTemporalTurnWriter struct {
 func (w *fixedTemporalTurnWriter) GetOrCreateTemporalTurn(
 	_ context.Context, tenantID, runID, workflowID, executionID string, turnIndex int32,
 ) (run.TemporalTurnIdentity, error) {
+	if w == nil {
+		return run.TemporalTurnIdentity{}, errors.New("Temporal turn writer unavailable")
+	}
 	w.calls++
 	w.tenantID, w.runID, w.workflow = tenantID, runID, workflowID
 	w.execution, w.turnIndex = executionID, turnIndex
