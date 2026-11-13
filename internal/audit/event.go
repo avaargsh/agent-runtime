@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -138,6 +139,13 @@ type Recorder interface {
 func AppendChecked(ctx context.Context, recorder Recorder, event Event) error {
 	if recorder == nil {
 		return ErrRecorderUnavailable
+	}
+	value := reflect.ValueOf(recorder)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		if value.IsNil() {
+			return ErrRecorderUnavailable
+		}
 	}
 	if err := event.Validate(); err != nil {
 		return err
