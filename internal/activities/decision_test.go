@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/avaargsh/agent-runtime/internal/audit"
 	"github.com/avaargsh/agent-runtime/internal/breaker"
 	"github.com/avaargsh/agent-runtime/internal/decision"
 	"github.com/avaargsh/agent-runtime/internal/run"
@@ -69,7 +70,7 @@ func (r *fakeRunIdentityReader) GetRunIdentity(_ context.Context, _ string) (run
 
 func testRunIdentityReader() *fakeRunIdentityReader {
 	return &fakeRunIdentityReader{identity: run.Identity{
-		RunID:          "run-001",
+		RunID:          temporalTestRunID,
 		TenantID:       "tenant-001",
 		AgentID:        "agent-001",
 		AgentReleaseID: "release-001",
@@ -120,16 +121,22 @@ func activityTurn() decision.Turn {
 		InvocationID:    "invocation-001",
 		TenantID:        "tenant-001",
 		AgentID:         "agent-001",
-		RunID:           "run-001",
+		RunID:           temporalTestRunID,
 		TurnID:          "turn-001",
 		UserInput:       "hello",
 	}
 }
 
+type activityAuditRecorder struct{}
+
+func (activityAuditRecorder) Append(context.Context, audit.Event) error { return nil }
+
+func testAuditRecorder() audit.Recorder { return activityAuditRecorder{} }
+
 func closedRunBreaker(t *testing.T) breaker.Record {
 	t.Helper()
 	record, err := breaker.NewClosed(
-		breaker.Scope{Kind: breaker.ScopeRun, ID: "run-001"},
+		breaker.Scope{Kind: breaker.ScopeRun, ID: temporalTestRunID},
 		time.Date(2026, 11, 4, 17, 0, 0, 0, time.UTC),
 	)
 	if err != nil {
@@ -146,7 +153,11 @@ func TestInvokeDecisionRejectsOpenBreakerBeforeCallingClient(t *testing.T) {
 	}
 	store := &fakeBreakerStore{records: []breaker.Record{opened}}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
+	activity := Activities{
+		Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded with OPEN Run breaker")
@@ -165,11 +176,13 @@ func TestInvokeDecisionCancelsInFlightRequestWhenBreakerOpens(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closed, opened}}
 	client := &fakeDecisionInvoker{started: make(chan struct{})}
 	activity := Activities{
-		Client:       client,
-		Breakers:     store,
-		Runs:         testRunIdentityReader(),
-		Principals:   testPrincipalReader(),
-		PollInterval: time.Millisecond,
+		Client:        client,
+		Breakers:      store,
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+		PollInterval:  time.Millisecond,
 	}
 
 	result := make(chan error, 1)
@@ -198,7 +211,10 @@ func TestInvokeDecisionCancelsInFlightRequestWhenBreakerOpens(t *testing.T) {
 func TestInvokeDecisionFailsClosedWhenBreakerStoreUnavailable(t *testing.T) {
 	store := &fakeBreakerStore{err: errors.New("postgres unavailable")}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded while breaker state was unavailable")
@@ -211,7 +227,10 @@ func TestInvokeDecisionFailsClosedWhenBreakerStoreUnavailable(t *testing.T) {
 func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 	store := &fakeBreakerStore{}
 	client := &fakeDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() succeeded without a durable Run breaker")
@@ -224,13 +243,16 @@ func TestInvokeDecisionFailsClosedWhenBreakerRecordIsMissing(t *testing.T) {
 func TestInvokeDecisionUsesTenantBoundRunIdentity(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader()}
+	activity := Activities{Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
 
 	_, err := activity.InvokeDecision(context.Background(), activityTurn())
 	if err != nil {
 		t.Fatalf("InvokeDecision() error = %v", err)
 	}
-	if store.tenantID != "tenant-001" || store.runID != "run-001" {
+	if store.tenantID != "tenant-001" || store.runID != temporalTestRunID {
 		t.Fatalf("breaker lookup identity = (%q,%q), want (tenant-001,run-001)", store.tenantID, store.runID)
 	}
 	if client.calls != 1 {
@@ -243,7 +265,10 @@ func TestInvokeDecisionRejectsWorkflowIdentityThatDiffersFromPersistedRun(t *tes
 	reader.identity.TenantID = "tenant-victim"
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	client := &immediateDecisionInvoker{}
-	activity := Activities{Client: client, Breakers: store, Runs: reader, Principals: testPrincipalReader()}
+	activity := Activities{Client: client, Breakers: store, Runs: reader, Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
 
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
 		t.Fatal("InvokeDecision() accepted a Workflow tenant that differs from the persisted Run")
@@ -309,11 +334,13 @@ func TestInvokeDecisionIgnoresWatcherQueryCancelledByNormalCompletion(t *testing
 		pollStarted: make(chan struct{}),
 	}
 	activity := Activities{
-		Client:       waitForPollInvoker{pollStarted: store.pollStarted},
-		Breakers:     store,
-		Runs:         testRunIdentityReader(),
-		Principals:   testPrincipalReader(),
-		PollInterval: time.Millisecond,
+		Client:        waitForPollInvoker{pollStarted: store.pollStarted},
+		Breakers:      store,
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+		PollInterval:  time.Millisecond,
 	}
 
 	result, err := activity.InvokeDecision(context.Background(), activityTurn())

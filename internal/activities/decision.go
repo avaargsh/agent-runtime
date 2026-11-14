@@ -9,6 +9,7 @@ import (
 	"github.com/avaargsh/agent-runtime/internal/breaker"
 	"github.com/avaargsh/agent-runtime/internal/decision"
 	"github.com/avaargsh/agent-runtime/internal/run"
+	"github.com/avaargsh/agent-runtime/internal/securitycontext"
 	"go.temporal.io/sdk/temporal"
 )
 
@@ -36,11 +37,13 @@ type RunPrincipalReader interface {
 }
 
 type Activities struct {
-	Client       DecisionInvoker
-	Breakers     BreakerReader
-	Runs         RunIdentityReader
-	Principals   RunPrincipalReader
-	PollInterval time.Duration
+	Client        DecisionInvoker
+	Breakers      BreakerReader
+	Runs          RunIdentityReader
+	Principals    RunPrincipalReader
+	Execution     TemporalExecutionResolver
+	TemporalTurns TemporalTurnWriter
+	PollInterval  time.Duration
 }
 
 // InvokeDecision resolves canonical identity from the Runtime Run store before
@@ -81,6 +84,49 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 	if err := principal.Validate(); err != nil {
 		return empty, nonRetryableRunPrincipalError(err)
 	}
+
+	if a.Execution == nil || a.TemporalTurns == nil {
+		return empty, ErrTemporalExecutionUnavailable
+	}
+	execution, err := a.Execution.Resolve(ctx)
+	if err != nil {
+		return empty, nonRetryableTemporalIdentityError(fmt.Errorf("%w: %v", ErrTemporalExecutionUnavailable, err))
+	}
+	expectedWorkflowID := run.ACPWorkflowPrefix + identity.RunID
+	if execution.WorkflowID != expectedWorkflowID || execution.ExecutionID == "" {
+		return empty, nonRetryableTemporalIdentityError(ErrTemporalIdentityMismatch)
+	}
+	temporalTurn, err := a.TemporalTurns.GetOrCreateTemporalTurn(
+		ctx, identity.TenantID, identity.RunID, execution.WorkflowID, execution.ExecutionID, 1,
+	)
+	if err != nil {
+		return empty, fmt.Errorf("persist server-bound Runtime Temporal Turn identity: %w", err)
+	}
+	if err := temporalTurn.Validate(); err != nil ||
+		temporalTurn.TenantID != identity.TenantID ||
+		temporalTurn.RunID != identity.RunID ||
+		temporalTurn.WorkflowID != execution.WorkflowID ||
+		temporalTurn.TemporalExecutionID != execution.ExecutionID ||
+		temporalTurn.TurnIndex != 1 {
+		return empty, nonRetryableTemporalIdentityError(ErrTemporalIdentityMismatch)
+	}
+
+	// Workflow-supplied turn/invocation IDs are correlation hints only.
+	// Replace them with Runtime-owned IDs bound to the Temporal Server
+	// execution before any external egress.
+	turn.TurnID = temporalTurn.TurnID
+	turn.InvocationID = temporalTurn.InvocationID
+	trustedContext, err := securitycontext.New(securitycontext.Claims{
+		TenantID: identity.TenantID, SubjectID: principal.SubjectID, ActorID: principal.ActorID,
+		AgentID: identity.AgentID, AgentReleaseID: identity.AgentReleaseID,
+		SessionID: identity.SessionID, RunID: identity.RunID,
+		RunAttemptID: temporalTurn.RunAttemptID, TurnID: temporalTurn.TurnID,
+		PolicyRevision: principal.PolicyRevision,
+	})
+	if err != nil {
+		return empty, nonRetryableRunPrincipalError(err)
+	}
+	ctx = securitycontext.WithContext(ctx, trustedContext)
 
 	initial, err := a.Breakers.GetRunBreaker(ctx, identity.TenantID, identity.RunID)
 	if err != nil {
@@ -176,6 +222,14 @@ func nonRetryableRunPrincipalError(cause error) error {
 	return temporal.NewNonRetryableApplicationError(
 		"Decision Activity cannot execute without an immutable trusted Run principal",
 		"RUN_PRINCIPAL_UNAVAILABLE",
+		cause,
+	)
+}
+
+func nonRetryableTemporalIdentityError(cause error) error {
+	return temporal.NewNonRetryableApplicationError(
+		"Decision Activity rejected an untrusted or mismatched Temporal execution identity",
+		"TEMPORAL_EXECUTION_UNTRUSTED",
 		cause,
 	)
 }

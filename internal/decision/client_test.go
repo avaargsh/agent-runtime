@@ -52,7 +52,7 @@ func TestInvokeFinal(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"protocol_version":"v0.1","invocation_id":"inv-1","kind":"final_response","text":"ok"}`)
 	})
-	out, err := (Client{Endpoint: url, Protector: passThroughProtector{}}).Invoke(context.Background(), sample(), sampleIdentity())
+	out, err := auditedClient(url, passThroughProtector{}).Invoke(decisionAuditContext(t), sample(), sampleIdentity())
 	if err != nil || out.Text != "ok" {
 		t.Fatalf("result=%+v err=%v", out, err)
 	}
@@ -73,7 +73,7 @@ func TestInvalidResponses(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprint(w, body)
 			})
-			if _, err := (Client{Endpoint: url, Protector: passThroughProtector{}}).Invoke(context.Background(), sample(), sampleIdentity()); err == nil {
+			if _, err := auditedClient(url, passThroughProtector{}).Invoke(decisionAuditContext(t), sample(), sampleIdentity()); err == nil {
 				t.Fatal("expected rejection")
 			}
 		})
@@ -84,7 +84,7 @@ func TestRejectRedirect(t *testing.T) {
 	url := setup(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://example.org/", http.StatusTemporaryRedirect)
 	})
-	if _, err := (Client{Endpoint: url, Protector: passThroughProtector{}}).Invoke(context.Background(), sample(), sampleIdentity()); err == nil {
+	if _, err := auditedClient(url, passThroughProtector{}).Invoke(decisionAuditContext(t), sample(), sampleIdentity()); err == nil {
 		t.Fatal("redirect followed")
 	}
 }

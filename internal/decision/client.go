@@ -3,6 +3,8 @@ package decision
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,8 +16,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/avaargsh/agent-runtime/internal/audit"
 	"github.com/avaargsh/agent-runtime/internal/dataprotection"
 	"github.com/avaargsh/agent-runtime/internal/run"
+	"github.com/avaargsh/agent-runtime/internal/securitycontext"
+	"github.com/google/uuid"
 )
 
 const (
@@ -26,8 +31,9 @@ const (
 )
 
 var (
-	ErrDataProtectionUnavailable = errors.New("Decision data protection is unavailable")
-	ErrRunIdentityMismatch       = errors.New("Decision Run identity does not match persisted Runtime identity")
+	ErrDataProtectionUnavailable  = errors.New("Decision data protection is unavailable")
+	ErrRunIdentityMismatch        = errors.New("Decision Run identity does not match persisted Runtime identity")
+	ErrSecurityContextUnavailable = errors.New("trusted Decision SecurityContext is unavailable")
 )
 
 // DataProtector is the mandatory egress and response boundary. Implementations
@@ -41,6 +47,7 @@ type Client struct {
 	Endpoint  string
 	HTTP      *http.Client
 	Protector DataProtector
+	Audit     audit.Recorder
 }
 
 func validateEndpoint(endpoint string) error {
@@ -80,6 +87,16 @@ func (c Client) Invoke(ctx context.Context, turn Turn, identity run.Identity) (R
 	if err := validateEndpoint(c.Endpoint); err != nil {
 		return result, err
 	}
+	trustedContext, ok := securitycontext.FromContext(ctx)
+	if !ok {
+		return result, ErrSecurityContextUnavailable
+	}
+	claims := trustedContext.Claims()
+	if claims.TenantID != identity.TenantID || claims.AgentID != identity.AgentID ||
+		claims.AgentReleaseID != identity.AgentReleaseID || claims.SessionID != identity.SessionID ||
+		claims.RunID != identity.RunID {
+		return result, ErrRunIdentityMismatch
+	}
 
 	scope := dataprotection.Scope{TenantID: identity.TenantID, RunID: identity.RunID}
 	protectedInput, err := c.Protector.ProtectOutbound(
@@ -96,6 +113,20 @@ func (c Client) Invoke(ctx context.Context, turn Turn, identity run.Identity) (R
 	payload, err := json.Marshal(outboundTurn)
 	if err != nil {
 		return result, err
+	}
+	payloadDigest := sha256.Sum256(payload)
+	if err := audit.AppendChecked(ctx, c.Audit, audit.Event{
+		EventID:       uuid.NewString(),
+		OccurredAt:    time.Now().UTC(),
+		Type:          audit.EventModelRequestPrepared,
+		Identity:      trustedContext,
+		Source:        "agent-runtime/decision-client",
+		Action:        "MODEL_REQUEST",
+		Resource:      DecisionModelAudience,
+		Outcome:       audit.OutcomePending,
+		PayloadDigest: "sha256:" + hex.EncodeToString(payloadDigest[:]),
+	}); err != nil {
+		return result, fmt.Errorf("persist model egress audit before HTTP request: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(payload))
 	if err != nil {
