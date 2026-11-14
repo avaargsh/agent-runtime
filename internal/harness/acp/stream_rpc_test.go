@@ -413,7 +413,7 @@ func TestStreamRPCDoesNotExposeAgentErrorText(t *testing.T) {
 	writeRPCLine(t, agentConn, map[string]any{
 		"jsonrpc": "2.0", "id": request["id"],
 		"error": map[string]any{
-			"code": -32042,
+			"code":    -32042,
 			"message": "AGENT_UNTRUSTED_CANARY\nFORGED_AUDIT_LINE",
 		},
 	})
