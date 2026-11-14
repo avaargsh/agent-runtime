@@ -47,8 +47,8 @@ func TestStreamRPCRejectsSecondInFlightCallWithoutRetiringFirst(t *testing.T) {
 	}()
 	select {
 	case err := <-second:
-		if err == nil {
-			t.Fatal("second outstanding load was accepted")
+		if !errors.Is(err, ErrRPCInFlight) {
+			t.Fatalf("second outstanding load was not rejected with bounded error: %v", err)
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("second outstanding load blocked rather than being rejected promptly")

@@ -18,6 +18,7 @@ const MaxACPFrameBytes = 1 << 20
 var (
 	ErrRPCMethodDenied = errors.New("ACP v1 method is not permitted by this Runtime transport")
 	ErrRPCStreamClosed = errors.New("ACP v1 transport is closed or untrusted")
+	ErrRPCInFlight     = errors.New("ACP v1 transport already has an in-flight request")
 )
 
 // StreamRPC is a deliberately narrow, bounded JSON-RPC 2.0 transport.
@@ -92,6 +93,14 @@ func (s *StreamRPC) Call(ctx context.Context, method string, params any, result 
 		err := s.stopped
 		s.mu.Unlock()
 		return err
+	}
+	// Only initialize/session/load require responses. A second outstanding
+	// call cannot acquire another pending slot or block in an Agent write.
+	// Return without retiring the stream so the original request and one-way
+	// session/cancel can still complete.
+	if len(s.pending) != 0 {
+		s.mu.Unlock()
+		return ErrRPCInFlight
 	}
 	s.nextID++
 	id := s.nextID
