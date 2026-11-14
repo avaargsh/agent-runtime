@@ -11,6 +11,76 @@ import (
 	"time"
 )
 
+// A bounded ACP seam does not need multiple outstanding request/reply calls.
+// A second session/load must fail promptly without sending another JSON-RPC
+// frame or killing the first in-flight load. One-way cancellation remains valid.
+func TestStreamRPCRejectsSecondInFlightCallWithoutRetiringFirst(t *testing.T) {
+	clientConn, agentConn := net.Pipe()
+	defer clientConn.Close()
+	defer agentConn.Close()
+	if err := agentConn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	rpc, err := NewStreamRPC(clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rpc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	first := make(chan error, 1)
+	go func() {
+		var result struct{}
+		first <- rpc.Call(ctx, "session/load", map[string]any{"sessionId": "bound-session"}, &result)
+	}()
+	wire := bufio.NewReader(agentConn)
+	request := readRPCLine(t, wire)
+	if request["method"] != "session/load" {
+		t.Fatalf("first ACP call not dispatched: %+v", request)
+	}
+
+	second := make(chan error, 1)
+	go func() {
+		var result struct{}
+		second <- rpc.Call(ctx, "session/load", map[string]any{"sessionId": "reentrant-session"}, &result)
+	}()
+	select {
+	case err := <-second:
+		if err == nil {
+			t.Fatal("second outstanding load was accepted")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("second outstanding load blocked rather than being rejected promptly")
+	}
+
+	cancelDone := make(chan error, 1)
+	go func() {
+		cancelDone <- rpc.Notify(ctx, "session/cancel", map[string]any{"sessionId": "bound-session"})
+	}()
+	notification := readRPCLine(t, wire)
+	if notification["method"] != "session/cancel" {
+		t.Fatalf("one-way cancellation was blocked by pending load: %+v", notification)
+	}
+	select {
+	case err := <-cancelDone:
+		if err != nil {
+			t.Fatalf("cancel notification failed during pending load: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("cancel notification never completed")
+	}
+	writeRPCLine(t, agentConn, map[string]any{"jsonrpc": "2.0", "id": request["id"], "result": map[string]any{}})
+	select {
+	case err := <-first:
+		if err != nil {
+			t.Fatalf("rejected second call retired the first: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("first call never completed")
+	}
+}
+
 func TestStreamRPCV1HandlesPermissionDenyWhileLoadPending(t *testing.T) {
 	clientConn, agentConn := net.Pipe()
 	defer agentConn.Close()
