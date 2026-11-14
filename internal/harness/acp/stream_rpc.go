@@ -210,6 +210,13 @@ func (s *StreamRPC) readLoop() {
 			return
 		}
 		if message.Method != "" {
+			// An Agent request/notification cannot also be a JSON-RPC
+			// response. Treat mixed envelopes as protocol corruption,
+			// never as permission requests or trusted session updates.
+			if len(message.Result) != 0 || len(message.Error) != 0 {
+				s.fail(fmt.Errorf("%w: mixed Agent request and response frame", ErrRPCStreamClosed))
+				return
+			}
 			if err := s.handleAgentMethod(message); err != nil {
 				s.fail(err)
 				return
