@@ -273,6 +273,61 @@ func TestStreamRPCDuplicateTopLevelACKFieldsFailClosed(t *testing.T) {
 	}
 }
 
+// JSON-RPC request/notification frames cannot also claim to be responses.
+// Without this envelope fence a mixed method+result/error is dispatched as an
+// Agent method, potentially producing a reply on a session/load request ID.
+func TestStreamRPCRejectsMixedRequestAndResponseFrames(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		frame map[string]any
+	}{
+		{"permission-with-result", map[string]any{
+			"jsonrpc": "2.0", "id": 97, "method": "session/request_permission", "params": map[string]any{}, "result": map[string]any{},
+		}},
+		{"filesystem-with-error", map[string]any{
+			"jsonrpc": "2.0", "id": 98, "method": "fs/read_text_file", "error": map[string]any{"code": -32000, "message": "untrusted"},
+		}},
+		{"update-notification-with-result", map[string]any{
+			"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s"}, "result": map[string]any{},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clientConn, agentConn := net.Pipe()
+			defer clientConn.Close()
+			defer agentConn.Close()
+			if err := agentConn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			rpc, err := NewStreamRPC(clientConn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rpc.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				var response struct{}
+				done <- rpc.Call(ctx, "session/load", map[string]any{"sessionId": "bound"}, &response)
+			}()
+			_ = readRPCLine(t, bufio.NewReader(agentConn))
+			writeRPCLine(t, agentConn, tc.frame)
+			select {
+			case err := <-done:
+				if !errors.Is(err, ErrRPCStreamClosed) {
+					t.Fatalf("mixed Agent request/response frame did not fail closed: %v", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("mixed Agent frame left session/load pending")
+			}
+			if err := rpc.Notify(context.Background(), "session/cancel", nil); !errors.Is(err, ErrRPCStreamClosed) {
+				t.Fatalf("mixed Agent frame left stream reusable: %v", err)
+			}
+		})
+	}
+}
+
 func readRPCLine(t *testing.T, reader *bufio.Reader) map[string]any {
 	t.Helper()
 	data, err := reader.ReadBytes('\n')
