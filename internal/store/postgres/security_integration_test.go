@@ -107,6 +107,10 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	// Reproduce a database genuinely stopped at v4: remove new v8,
 	// v7 and v6 schema elements before reapplying their migrations.
 	for _, sql := range []string{
+		"DROP TABLE runtime_harness_session_claims",
+		"DROP FUNCTION enforce_runtime_harness_claim_transition()",
+		"DROP FUNCTION reject_runtime_harness_claim_truncate()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 9",
 		"DROP TABLE runtime_decision_turns",
 		"DROP TABLE runtime_run_attempts",
 		"DROP FUNCTION reject_runtime_execution_identity_mutation()",
@@ -143,8 +147,8 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 8 {
-		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 8", version)
+	if version != 9 {
+		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 9", version)
 	}
 	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
 		t.Fatal("previously applied v4 database still permits audit TRUNCATE")
