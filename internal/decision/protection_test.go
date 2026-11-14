@@ -125,8 +125,8 @@ func TestInvokeProtectsModelEgressAndRestoresAuthorizedUserResponse(t *testing.T
 		})
 	})
 
-	client := Client{Endpoint: url, Protector: engine}
-	got, err := client.Invoke(context.Background(), turn, sampleIdentity())
+	client := auditedClient(url, engine)
+	got, err := client.Invoke(decisionAuditContext(t), turn, sampleIdentity())
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
@@ -165,7 +165,7 @@ func TestInvokeFailsClosedWhenProtectionFailsBeforeEgress(t *testing.T) {
 			turn := sample()
 			turn.UserInput = "email " + testPII
 			client := Client{Endpoint: url, Protector: engine}
-			if _, err := client.Invoke(context.Background(), turn, sampleIdentity()); err == nil {
+			if _, err := client.Invoke(decisionAuditContext(t), turn, sampleIdentity()); err == nil {
 				t.Fatal("Invoke() succeeded despite a data-protection dependency failure")
 			}
 			if got := requests.Load(); got != 0 {
@@ -196,7 +196,7 @@ func TestInvokeReturnsNoResultWhenResponseRehydrationIsDenied(t *testing.T) {
 		})
 	})
 
-	got, err := (Client{Endpoint: url, Protector: engine}).Invoke(context.Background(), turn, sampleIdentity())
+	got, err := auditedClient(url, engine).Invoke(decisionAuditContext(t), turn, sampleIdentity())
 	if err == nil {
 		t.Fatal("Invoke() succeeded despite denied response rehydration")
 	}

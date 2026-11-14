@@ -55,11 +55,13 @@ func main() {
 	w := worker.New(c, workflows.Queue, worker.Options{})
 	w.RegisterWorkflow(workflows.Run)
 	w.RegisterActivity(&activities.Activities{
-		Client:       decision.Client{Endpoint: endpoint},
-		Breakers:     store,
-		Runs:         store,
-		Principals:   store,
-		PollInterval: 250 * time.Millisecond,
+		Client:        decision.Client{Endpoint: endpoint, Audit: store},
+		Breakers:      store,
+		Runs:          store,
+		Principals:    store,
+		Execution:     activities.ServerTemporalExecutionResolver{},
+		TemporalTurns: store,
+		PollInterval:  250 * time.Millisecond,
 	})
 	if err := w.Run(worker.InterruptCh()); err != nil {
 		log.Fatal(err)

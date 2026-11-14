@@ -24,5 +24,5 @@ func Run(ctx workflow.Context, turn decision.Turn) (decision.Result, error) {
 	if err != nil {
 		return decision.Result{}, err
 	}
-	return result, result.Validate(turn)
+	return result, result.ValidateEnvelope()
 }
