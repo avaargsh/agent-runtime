@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/avaargsh/agent-runtime/internal/breaker"
+	"github.com/avaargsh/agent-runtime/internal/dataprotection"
 	"github.com/avaargsh/agent-runtime/internal/decision"
+	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/avaargsh/agent-runtime/internal/workflows"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -37,6 +39,16 @@ func (s *requestGatedBreakerStore) GetRunBreaker(ctx context.Context, _, _ strin
 	default:
 		return s.closed, nil
 	}
+}
+
+type testDecisionProtector struct{}
+
+func (testDecisionProtector) ProtectOutbound(_ context.Context, _ dataprotection.Scope, _ string, payload []byte) ([]byte, error) {
+	return append([]byte(nil), payload...), nil
+}
+
+func (testDecisionProtector) RestoreInbound(_ context.Context, _ dataprotection.Scope, _, _ string, payload []byte) ([]byte, error) {
+	return append([]byte(nil), payload...), nil
 }
 
 func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
@@ -75,11 +87,17 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 	store := &requestGatedBreakerStore{closed: closed, opened: opened, requestReached: requestReached}
 	activity := &Activities{
 		Client: decision.Client{
-			Endpoint: server.URL,
-			HTTP:     &http.Client{Timeout: 5 * time.Second, Transport: server.Client().Transport},
+			Endpoint:  server.URL,
+			Protector: testDecisionProtector{},
+			Audit:     testAuditRecorder(),
+			HTTP:      &http.Client{Timeout: 5 * time.Second, Transport: server.Client().Transport},
 		},
-		Breakers:     store,
-		PollInterval: 5 * time.Millisecond,
+		Breakers:      store,
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+		PollInterval:  5 * time.Millisecond,
 	}
 
 	var suite testsuite.WorkflowTestSuite
@@ -122,5 +140,38 @@ func TestRunWorkflowCancelsDecisionHTTPWhenBreakerOpens(t *testing.T) {
 	}
 	if got := store.lookups.Load(); got < 2 {
 		t.Fatalf("Run breaker lookups = %d, want preflight plus in-flight polling", got)
+	}
+}
+
+func TestDecisionHTTPNeverSentWithoutPersistedPrincipalSnapshot(t *testing.T) {
+	var httpRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"protocol_version":"v0.1","invocation_id":"invocation-001","kind":"final_response","text":"ok"}`))
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		name       string
+		principals RunPrincipalReader
+	}{
+		{"no principal reader", nil},
+		{"repository unavailable", &principalFixtureReader{err: errors.New("PostgreSQL principal read unavailable")}},
+		{"invalid stored principal", &principalFixtureReader{snapshot: run.PrincipalSnapshot{Version: "acp-principal/v1", SubjectID: "spoofed"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := Activities{
+				Client:     decision.Client{Endpoint: server.URL, Protector: testDecisionProtector{}},
+				Breakers:   &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}},
+				Runs:       testRunIdentityReader(),
+				Principals: tc.principals,
+			}
+			if _, err := a.InvokeDecision(context.Background(), activityTurn()); err == nil {
+				t.Fatal("unverified principal reached Decision HTTP")
+			}
+			if got := httpRequests.Load(); got != 0 {
+				t.Fatalf("Decision HTTP egress observed without trusted principal: %d", got)
+			}
+		})
 	}
 }

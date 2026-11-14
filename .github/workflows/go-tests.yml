@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  # Fail closed rather than silently downloading a different toolchain.
+  # Prevent go.mod/toolchain drift from silently selecting a different binary.
   GOTOOLCHAIN: local
 
 concurrency:

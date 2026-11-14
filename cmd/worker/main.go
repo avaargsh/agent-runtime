@@ -37,6 +37,7 @@ func main() {
 	}
 
 	store := postgres.New(pool)
+	log.Print("Decision data protection adapters are not configured; model egress will fail closed until a detector, encrypted Vault and rehydration authorizer are injected")
 	if err := store.Migrate(startupCtx); err != nil {
 		log.Fatalf("migrate Runtime PostgreSQL: %v", err)
 	}
@@ -54,9 +55,13 @@ func main() {
 	w := worker.New(c, workflows.Queue, worker.Options{})
 	w.RegisterWorkflow(workflows.Run)
 	w.RegisterActivity(&activities.Activities{
-		Client:       decision.Client{Endpoint: endpoint},
-		Breakers:     store,
-		PollInterval: 250 * time.Millisecond,
+		Client:        decision.Client{Endpoint: endpoint, Audit: store},
+		Breakers:      store,
+		Runs:          store,
+		Principals:    store,
+		Execution:     activities.ServerTemporalExecutionResolver{},
+		TemporalTurns: store,
+		PollInterval:  250 * time.Millisecond,
 	})
 	if err := w.Run(worker.InterruptCh()); err != nil {
 		log.Fatal(err)

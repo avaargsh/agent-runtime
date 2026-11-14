@@ -13,7 +13,7 @@ func TestPythonDecisionPlugin(t *testing.T) {
 	if endpoint == "" {
 		t.Skip("set DECISION_INTEGRATION_URL for real Python contract test")
 	}
-	result, err := (Client{Endpoint: endpoint}).Invoke(context.Background(), sample())
+	result, err := (Client{Endpoint: endpoint, Protector: passThroughProtector{}}).Invoke(context.Background(), sample(), sampleIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}

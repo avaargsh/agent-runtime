@@ -35,10 +35,22 @@ func (t Turn) Validate() error {
 	return nil
 }
 
-func (r Result) Validate(t Turn) error {
-	if r.ProtocolVersion != "v0.1" || r.InvocationID != t.InvocationID || r.Kind != "final_response" ||
-		strings.TrimSpace(r.Text) == "" || !utf8.ValidString(r.Text) || len(r.Text) > 8192 {
+func (r Result) ValidateEnvelope() error {
+	if r.ProtocolVersion != "v0.1" || strings.TrimSpace(r.InvocationID) == "" ||
+		strings.TrimSpace(r.InvocationID) != r.InvocationID || len(r.InvocationID) > 255 ||
+		r.Kind != "final_response" || strings.TrimSpace(r.Text) == "" ||
+		!utf8.ValidString(r.Text) || len(r.Text) > 8192 {
 		return errors.New("invalid decision result")
+	}
+	return nil
+}
+
+func (r Result) Validate(t Turn) error {
+	if err := r.ValidateEnvelope(); err != nil {
+		return err
+	}
+	if r.InvocationID != t.InvocationID {
+		return errors.New("decision result invocation does not match canonical turn")
 	}
 	return nil
 }

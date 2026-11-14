@@ -3,6 +3,8 @@ package decision
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,13 +15,39 @@ import (
 	"net/url"
 	"time"
 	"unicode/utf8"
+
+	"github.com/avaargsh/agent-runtime/internal/audit"
+	"github.com/avaargsh/agent-runtime/internal/dataprotection"
+	"github.com/avaargsh/agent-runtime/internal/run"
+	"github.com/avaargsh/agent-runtime/internal/securitycontext"
+	"github.com/google/uuid"
 )
 
-const maxResponseBytes = 8192
+const (
+	maxResponseBytes                   = 8192
+	DecisionModelAudience              = "model-provider"
+	DecisionUserAudience               = "runtime-user"
+	DecisionUserVisibleResponsePurpose = "user-visible-response"
+)
+
+var (
+	ErrDataProtectionUnavailable  = errors.New("Decision data protection is unavailable")
+	ErrRunIdentityMismatch        = errors.New("Decision Run identity does not match persisted Runtime identity")
+	ErrSecurityContextUnavailable = errors.New("trusted Decision SecurityContext is unavailable")
+)
+
+// DataProtector is the mandatory egress and response boundary. Implementations
+// must fail closed on detector, Vault or authorization errors.
+type DataProtector interface {
+	ProtectOutbound(ctx context.Context, scope dataprotection.Scope, audience string, payload []byte) ([]byte, error)
+	RestoreInbound(ctx context.Context, scope dataprotection.Scope, audience, purpose string, payload []byte) ([]byte, error)
+}
 
 type Client struct {
-	Endpoint string
-	HTTP     *http.Client
+	Endpoint  string
+	HTTP      *http.Client
+	Protector DataProtector
+	Audit     audit.Recorder
 }
 
 func validateEndpoint(endpoint string) error {
@@ -39,17 +67,66 @@ func validateEndpoint(endpoint string) error {
 	return nil
 }
 
-func (c Client) Invoke(ctx context.Context, turn Turn) (Result, error) {
+// Invoke sends only protected user input to the remote Decision plugin. The
+// supplied identity must have been resolved from Runtime's persisted Run row
+// by the calling Activity; fields inside Turn are checked as correlation data.
+func (c Client) Invoke(ctx context.Context, turn Turn, identity run.Identity) (Result, error) {
 	var result Result
 	if err := turn.Validate(); err != nil {
 		return result, err
 	}
+	if err := identity.Validate(); err != nil {
+		return result, fmt.Errorf("invalid trusted Run identity: %w", err)
+	}
+	if identity.RunID != turn.RunID || identity.TenantID != turn.TenantID || identity.AgentID != turn.AgentID {
+		return result, ErrRunIdentityMismatch
+	}
+	if c.Protector == nil {
+		return result, ErrDataProtectionUnavailable
+	}
 	if err := validateEndpoint(c.Endpoint); err != nil {
 		return result, err
 	}
-	payload, err := json.Marshal(turn)
+	trustedContext, ok := securitycontext.FromContext(ctx)
+	if !ok {
+		return result, ErrSecurityContextUnavailable
+	}
+	claims := trustedContext.Claims()
+	if claims.TenantID != identity.TenantID || claims.AgentID != identity.AgentID ||
+		claims.AgentReleaseID != identity.AgentReleaseID || claims.SessionID != identity.SessionID ||
+		claims.RunID != identity.RunID {
+		return result, ErrRunIdentityMismatch
+	}
+
+	scope := dataprotection.Scope{TenantID: identity.TenantID, RunID: identity.RunID}
+	protectedInput, err := c.Protector.ProtectOutbound(
+		ctx,
+		scope,
+		DecisionModelAudience,
+		[]byte(turn.UserInput),
+	)
+	if err != nil {
+		return result, fmt.Errorf("protect Decision request before egress: %w", err)
+	}
+	outboundTurn := turn
+	outboundTurn.UserInput = string(protectedInput)
+	payload, err := json.Marshal(outboundTurn)
 	if err != nil {
 		return result, err
+	}
+	payloadDigest := sha256.Sum256(payload)
+	if err := audit.AppendChecked(ctx, c.Audit, audit.Event{
+		EventID:       uuid.NewString(),
+		OccurredAt:    time.Now().UTC(),
+		Type:          audit.EventModelRequestPrepared,
+		Identity:      trustedContext,
+		Source:        "agent-runtime/decision-client",
+		Action:        "MODEL_REQUEST",
+		Resource:      DecisionModelAudience,
+		Outcome:       audit.OutcomePending,
+		PayloadDigest: "sha256:" + hex.EncodeToString(payloadDigest[:]),
+	}); err != nil {
+		return result, fmt.Errorf("persist model egress audit before HTTP request: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(payload))
 	if err != nil {
@@ -89,6 +166,21 @@ func (c Client) Invoke(ctx context.Context, turn Turn) (Result, error) {
 	}
 	if err = result.Validate(turn); err != nil {
 		return Result{}, err
+	}
+
+	restoredText, err := c.Protector.RestoreInbound(
+		ctx,
+		scope,
+		DecisionUserAudience,
+		DecisionUserVisibleResponsePurpose,
+		[]byte(result.Text),
+	)
+	if err != nil {
+		return Result{}, fmt.Errorf("restore authorized Decision response: %w", err)
+	}
+	result.Text = string(restoredText)
+	if err = result.Validate(turn); err != nil {
+		return Result{}, fmt.Errorf("validate restored Decision response: %w", err)
 	}
 	return result, nil
 }

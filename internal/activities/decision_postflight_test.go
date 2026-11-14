@@ -8,6 +8,7 @@ import (
 
 	"github.com/avaargsh/agent-runtime/internal/breaker"
 	"github.com/avaargsh/agent-runtime/internal/decision"
+	"github.com/avaargsh/agent-runtime/internal/run"
 	"go.temporal.io/sdk/temporal"
 )
 
@@ -18,7 +19,7 @@ type flipBreakerBeforeReturn struct {
 	next  breaker.Record
 }
 
-func (f flipBreakerBeforeReturn) Invoke(_ context.Context, turn decision.Turn) (decision.Result, error) {
+func (f flipBreakerBeforeReturn) Invoke(_ context.Context, turn decision.Turn, _ run.Identity) (decision.Result, error) {
 	f.store.mu.Lock()
 	f.store.records = []breaker.Record{f.next}
 	f.store.mu.Unlock()
@@ -38,9 +39,13 @@ func TestInvokeDecisionRejectsBreakerTripBeforeFirstPoll(t *testing.T) {
 	}
 	store := &fakeBreakerStore{records: []breaker.Record{closed}}
 	activity := Activities{
-		Breakers:     store,
-		Client:       flipBreakerBeforeReturn{store: store, next: opened},
-		PollInterval: time.Hour,
+		Breakers:      store,
+		Client:        flipBreakerBeforeReturn{store: store, next: opened},
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+		PollInterval:  time.Hour,
 	}
 	_, err = activity.InvokeDecision(context.Background(), activityTurn())
 	var appErr *temporal.ApplicationError
@@ -56,7 +61,7 @@ type loseBreakerStoreOnReturn struct {
 	store *fakeBreakerStore
 }
 
-func (f loseBreakerStoreOnReturn) Invoke(_ context.Context, turn decision.Turn) (decision.Result, error) {
+func (f loseBreakerStoreOnReturn) Invoke(_ context.Context, turn decision.Turn, _ run.Identity) (decision.Result, error) {
 	f.store.mu.Lock()
 	f.store.err = errors.New("post-invocation database unavailable")
 	f.store.mu.Unlock()
@@ -71,9 +76,13 @@ func (f loseBreakerStoreOnReturn) Invoke(_ context.Context, turn decision.Turn) 
 func TestInvokeDecisionFailsClosedWhenPostInvocationBreakerReadFails(t *testing.T) {
 	store := &fakeBreakerStore{records: []breaker.Record{closedRunBreaker(t)}}
 	activity := Activities{
-		Breakers:     store,
-		Client:       loseBreakerStoreOnReturn{store: store},
-		PollInterval: time.Hour,
+		Breakers:      store,
+		Client:        loseBreakerStoreOnReturn{store: store},
+		Runs:          testRunIdentityReader(),
+		Principals:    testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+		PollInterval:  time.Hour,
 	}
 	_, err := activity.InvokeDecision(context.Background(), activityTurn())
 	var appErr *temporal.ApplicationError
