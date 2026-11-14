@@ -120,6 +120,13 @@ func TestCreateOrGetPersistsOneRunAndOneStartOutboxRecord(t *testing.T) {
 	if runs != 1 || outbox != 1 {
 		t.Fatalf("persisted runs=%d outbox=%d, want 1 and 1", runs, outbox)
 	}
+	var breakers int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$1", first.ID).Scan(&breakers); err != nil {
+		t.Fatal(err)
+	}
+	if breakers != 1 {
+		t.Fatalf("initial Run breaker count=%d, want 1", breakers)
+	}
 }
 
 func TestCreateOrGetRejectsChangedDigestForSameKey(t *testing.T) {
@@ -209,6 +216,13 @@ func TestCreateOrGetRollsBackRunWhenOutboxInsertFails(t *testing.T) {
 	}
 	if runs != 0 || outbox != 0 {
 		t.Fatalf("failed transaction left runs=%d outbox=%d, want 0 and 0", runs, outbox)
+	}
+	var breakers int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_circuit_breakers WHERE scope_kind='RUN'").Scan(&breakers); err != nil {
+		t.Fatal(err)
+	}
+	if breakers != 0 {
+		t.Fatalf("failed Run insert left %d breaker rows, want 0", breakers)
 	}
 }
 
