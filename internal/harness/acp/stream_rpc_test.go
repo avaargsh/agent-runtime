@@ -387,6 +387,54 @@ func TestStreamRPCRejectsAmbiguousAgentResponseAndRetiresStream(t *testing.T) {
 	}
 }
 
+// Agent-controlled JSON-RPC error text is not a trusted Runtime diagnostic.
+// Preserve the numeric code for triage without copying secrets or log-control
+// characters into errors that callers may persist in audit/log records.
+func TestStreamRPCDoesNotExposeAgentErrorText(t *testing.T) {
+	clientConn, agentConn := net.Pipe()
+	defer clientConn.Close()
+	defer agentConn.Close()
+	if err := agentConn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	rpc, err := NewStreamRPC(clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rpc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		var result struct{}
+		finished <- rpc.Call(ctx, "session/load", map[string]any{"sessionId": "existing-session"}, &result)
+	}()
+	request := readRPCLine(t, bufio.NewReader(agentConn))
+	writeRPCLine(t, agentConn, map[string]any{
+		"jsonrpc": "2.0", "id": request["id"],
+		"error": map[string]any{
+			"code": -32042,
+			"message": "AGENT_UNTRUSTED_CANARY\nFORGED_AUDIT_LINE",
+		},
+	})
+	select {
+	case err := <-finished:
+		if err == nil {
+			t.Fatal("Agent JSON-RPC error was treated as successful load")
+		}
+		if strings.Contains(err.Error(), "AGENT_UNTRUSTED_CANARY") ||
+			strings.Contains(err.Error(), "FORGED_AUDIT_LINE") ||
+			strings.Contains(err.Error(), "\n") {
+			t.Fatalf("untrusted Agent error content escaped transport: %v", err)
+		}
+		if !strings.Contains(err.Error(), "-32042") {
+			t.Fatalf("safe JSON-RPC error code was lost: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("Agent JSON-RPC error did not finish pending call")
+	}
+}
+
 func TestStreamRPCMalformedResultRetiresConnection(t *testing.T) {
 	clientConn, agentConn := net.Pipe()
 	defer clientConn.Close()
