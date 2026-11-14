@@ -41,6 +41,7 @@ Protocol v1 reference:
 
 **P0-B: secure bidirectional transport — protocol framing slice implemented, process boundary NOT implemented**
 - The transport reads bounded newline-delimited frames and responds to Agent permission requests with `cancelled`. It never starts a subprocess, grants capabilities, or automatically approves an Agent operation.
+- Untrusted JSON-RPC `error.message` is decoded for protocol-type validation but never copied into a Runtime error, log or audit record by this adapter; numeric JSON-RPC error codes remain available for diagnosis. The enclosing error/result remains an uncertain recovery outcome, not a final Run failure.
 - Still required: independently authenticated, pinned/sandboxed Codex or Claude-compatible executable, explicit working-directory allowlist, bounded stderr, subprocess kill/reap, OS-level read/write deadlines, and capability/credential isolation. The supplied `io.ReadWriteCloser` must already meet those operational requirements before production use.
 - `session/update` is **not** an audit event or durable evidence merely because it was buffered. An independent Event Inbox consumer must validate, authorize, persist and correlate all event identities. The bounded queue closes on overflow. SecurityContext and all protected effects remain under authenticated ACP (control-plane) + Runtime + EngageGuard authority.
 

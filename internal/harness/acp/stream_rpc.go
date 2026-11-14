@@ -407,7 +407,10 @@ func (s *StreamRPC) handleAgentReply(message streamEnvelope) error {
 		if err := json.Unmarshal(message.Error, &rpcError); err != nil {
 			return fmt.Errorf("%w: malformed Agent RPC error", ErrRPCStreamClosed)
 		}
-		reply.err = fmt.Errorf("ACP method failed (JSON-RPC %d): %s", rpcError.Code, rpcError.Message)
+		// The Agent controls error.message. Never propagate it into Runtime
+		// errors, logs or audit trails; the numeric JSON-RPC code suffices
+		// for bounded diagnostics without log injection or secret disclosure.
+		reply.err = fmt.Errorf("ACP method failed (JSON-RPC %d; Agent message redacted)", rpcError.Code)
 	}
 	s.mu.Lock()
 	pending := s.pending[id]
