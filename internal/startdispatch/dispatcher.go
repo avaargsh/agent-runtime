@@ -96,12 +96,12 @@ func DispatchOnce(ctx context.Context, store StartStore, c client.Client, owner 
 	}
 	if lease.Attempt == 1 {
 		execution, err := c.ExecuteWorkflow(workCtx, client.StartWorkflowOptions{
-			ID:                                        input.WorkflowID,
-			TaskQueue:                                 DevelopmentQueue,
-			WorkflowIDReusePolicy:                     enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
-			WorkflowIDConflictPolicy:                  enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
+			ID:                                       input.WorkflowID,
+			TaskQueue:                                DevelopmentQueue,
+			WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+			WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
 			WorkflowExecutionErrorWhenAlreadyStarted: true,
-			WorkflowExecutionTimeout:                  5 * time.Minute,
+			WorkflowExecutionTimeout:                 5 * time.Minute,
 		}, DevelopmentWorkflow, input)
 		if err != nil {
 			// Even AlreadyStarted is not evidence that the existing Workflow
