@@ -57,7 +57,7 @@ func (s *Store) GetDecisionAuthority(ctx context.Context, tenant, runID, invocat
 		JOIN %s b ON b.scope_kind='RUN' AND b.scope_id=r.run_id::text
 		WHERE r.tenant_id=$1 AND r.run_id=$2::uuid AND t.invocation_id=$3::uuid
 		  AND r.status='RUNNING' AND b.state='CLOSED'
-		  AND c.phase='WAITING_AUTHORITY'
+		  AND c.phase='WAITING_AUTHORITY' AND p.actor_id=p.subject_id
 	`, rel.runs, rel.principals, rel.checkpoints, rel.attempts, rel.turns, rel.breakers),
 		tenant, runID, invocationID).Scan(
 		&a.TenantID, &a.RunID, &a.RunIntentID, &a.RequestDigest, &a.WorkflowID,
