@@ -9,18 +9,25 @@ import (
 )
 
 const (
-	AcceptedDecisionWorkflow = "AcceptedDecisionV1"
-	AcceptedDecisionQueue    = "runtime-accepted-decision-development-v1"
+	AcceptedDecisionWorkflow        = "AcceptedDecisionV1"
+	AcceptedDecisionQueue           = "runtime-accepted-decision-development-v1"
+	AcceptedDecisionCheckpointQuery = "decision-checkpoint"
 )
 
 // AcceptedDecisionV1 is the reference-only first business stage of a
-// decision.v1 Run. It deliberately stops at the authority gate; neither
-// successful preparation nor workflow completion is business success.
+// decision.v1 Run. It remains durably paused at the authority gate. No
+// signal or update can grant authority until a verified adapter is wired.
 // Do not dispatch production Start Outbox events to this development queue.
 func AcceptedDecision(ctx workflow.Context, ref run.AcceptedDecisionRef) (run.DecisionCheckpoint, error) {
 	if ref.Validate() != nil || workflow.GetInfo(ctx).WorkflowExecution.ID != ref.WorkflowID {
 		return run.DecisionCheckpoint{}, temporal.NewNonRetryableApplicationError(
 			"accepted Run correlation mismatch", "DECISION_PREPARATION_DENIED", nil)
+	}
+	var checkpoint run.DecisionCheckpoint
+	if err := workflow.SetQueryHandler(ctx, AcceptedDecisionCheckpointQuery, func() (run.DecisionCheckpoint, error) {
+		return checkpoint, nil
+	}); err != nil {
+		return run.DecisionCheckpoint{}, err
 	}
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout:    10 * time.Second,
@@ -31,7 +38,6 @@ func AcceptedDecision(ctx workflow.Context, ref run.AcceptedDecisionRef) (run.De
 			MaximumAttempts:    3,
 		},
 	})
-	var checkpoint run.DecisionCheckpoint
 	err := workflow.ExecuteActivity(ctx, "PrepareAcceptedDecision", ref).Get(ctx, &checkpoint)
 	if err != nil {
 		return run.DecisionCheckpoint{}, err
@@ -42,5 +48,12 @@ func AcceptedDecision(ctx workflow.Context, ref run.AcceptedDecisionRef) (run.De
 		return run.DecisionCheckpoint{}, temporal.NewNonRetryableApplicationError(
 			"invalid committed decision checkpoint", "DECISION_PREPARATION_DENIED", nil)
 	}
-	return checkpoint, nil
+	// Do not complete the canonical Workflow ID with a nonterminal stage.
+	// A future versioned, independently authorized continuation must resume
+	// here; until then only cancellation or the execution deadline ends it.
+	if err := workflow.Await(ctx, func() bool { return false }); err != nil {
+		return run.DecisionCheckpoint{}, err
+	}
+	return run.DecisionCheckpoint{}, temporal.NewNonRetryableApplicationError(
+		"authority gate has no verified continuation", "DECISION_PREPARATION_DENIED", nil)
 }
