@@ -42,7 +42,7 @@ func TestDevelopmentStartDispatcherRecoversCommittedWorkflowWithoutSecondStart(t
 	}
 	server, err := testsuite.StartDevServer(ctx, testsuite.DevServerOptions{
 		CachedDownload: testsuite.CachedDownload{Version: "v1.10.0"},
-		LogLevel: "error",
+		LogLevel:       "error",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestDevelopmentStartDispatcherDoesNotAcknowledgeUnrelatedWorkflow(t *testin
 	}
 	server, err := testsuite.StartDevServer(ctx, testsuite.DevServerOptions{
 		CachedDownload: testsuite.CachedDownload{Version: "v1.10.0"},
-		LogLevel: "error",
+		LogLevel:       "error",
 	})
 	if err != nil {
 		t.Fatal(err)
