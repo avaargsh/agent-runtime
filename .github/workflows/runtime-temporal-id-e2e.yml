@@ -69,12 +69,10 @@ jobs:
       - name: Real Temporal business continuation after a wake hint
         run: |
           set -euo pipefail
-          go test -race -count=1 -v -run '^TestBusinessWorkflowConsumesFencedDecision CLI v1.10.0 with a file-backed SQLite dev server.
-# The test Workflow does not invoke Decision, external tools or protected
-# side effects. This does not bypass ACP subject/actor/policy gate G01/G05.
- ./internal/store/postgres | tee "${RUNNER_TEMP}/continuation-test.log"
+          go test -race -count=1 -v -run '^TestBusinessWorkflowConsumesFencedDecision$' ./internal/store/postgres | tee "${RUNNER_TEMP}/continuation-test.log"
           grep -Fq -- '--- PASS: TestBusinessWorkflowConsumesFencedDecision ' "${RUNNER_TEMP}/continuation-test.log"
 
 # Uses pinned Temporal CLI v1.10.0 with a file-backed SQLite dev server.
-# The test Workflow does not invoke Decision, external tools or protected
-# side effects. This does not bypass ACP subject/actor/policy gate G01/G05.
+# Local continuation test uses synthetic receipt digests; the pinned ACP
+# gate verifies actual Decision mTLS, source revocation and worker recovery.
+# No protected side effects or production workflow promotion.

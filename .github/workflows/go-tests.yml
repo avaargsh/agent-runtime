@@ -73,5 +73,9 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-      - name: Run PostgreSQL integration tests
-        run: go test -race -count=1 ./internal/store/postgres/...
+      - name: Behavior RED on real Temporal and PostgreSQL (pre-implementation)
+        env:
+          RUNTIME_TEMPORAL_INTEGRATION: "1"
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestBusinessWorkflowConsumesFencedDecision$' ./internal/store/postgres
