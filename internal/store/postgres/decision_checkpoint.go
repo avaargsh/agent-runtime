@@ -130,6 +130,21 @@ func (s *Store) PrepareAcceptedDecision(ctx context.Context, ref run.AcceptedDec
 	if persisted != checkpoint {
 		return empty, run.ErrDecisionPreparationDenied
 	}
+	// This trusted Activity has persisted its canonical execution and
+	// first business checkpoint in the same transaction. Only now may
+	// Runtime advance the accepted Run to RUNNING. Replay keeps the
+	// original transition timestamp; cancellation holds the same Run lock.
+	tag, err := tx.Exec(ctx, fmt.Sprintf(`
+		UPDATE %s SET status='RUNNING',
+		  updated_at=CASE WHEN status='QUEUED' THEN clock_timestamp() ELSE updated_at END
+		WHERE tenant_id=$1 AND run_id=$2::uuid AND status IN ('QUEUED','RUNNING')
+	`, rel.runs), ref.TenantID, ref.RunID)
+	if err != nil {
+		return empty, run.ErrRepositoryUnavailable
+	}
+	if tag.RowsAffected() != 1 {
+		return empty, run.ErrDecisionPreparationDenied
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return empty, run.ErrRepositoryUnavailable
 	}
