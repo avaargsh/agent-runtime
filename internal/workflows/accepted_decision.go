@@ -52,6 +52,17 @@ func AcceptedDecision(ctx workflow.Context, ref run.AcceptedDecisionRef) (run.De
 	// A future versioned, independently authorized continuation must resume
 	// here; until then only cancellation or the execution deadline ends it.
 	if err := workflow.Await(ctx, func() bool { return false }); err != nil {
+		if temporal.IsCanceledError(err) {
+			// The original context is canceled. Use a bounded disconnected
+			// Activity to record the exact pre-effect cancellation before
+			// reporting terminal cancellation to Temporal.
+			detached, cancel := workflow.NewDisconnectedContext(ctx)
+			defer cancel()
+			if cleanupErr := workflow.ExecuteActivity(detached, "CancelPreparedDecision", ref).Get(detached, nil); cleanupErr != nil {
+				return run.DecisionCheckpoint{}, temporal.NewNonRetryableApplicationError(
+					"Runtime cancellation is not reconciled", "DECISION_CANCELLATION_UNCERTAIN", cleanupErr)
+			}
+		}
 		return run.DecisionCheckpoint{}, err
 	}
 	return run.DecisionCheckpoint{}, temporal.NewNonRetryableApplicationError(
