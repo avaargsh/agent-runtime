@@ -107,6 +107,9 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	// Reproduce a database genuinely stopped at v4: remove new v8,
 	// v7 and v6 schema elements before reapplying their migrations.
 	for _, sql := range []string{
+		"DROP TRIGGER runs_acp_binding_immutable ON runs",
+		"DROP FUNCTION enforce_immutable_acp_run_binding()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 10",
 		"DROP TABLE runtime_harness_session_claims",
 		"DROP FUNCTION enforce_runtime_harness_claim_transition()",
 		"DROP FUNCTION reject_runtime_harness_claim_truncate()",
