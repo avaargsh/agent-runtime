@@ -10,6 +10,9 @@ on:
       - "internal/store/postgres/external_acp_temporal_integration_test.go"
       - "internal/startdispatch/**"
       - "internal/store/postgres/*decision_checkpoint*"
+      - "internal/store/postgres/*decision_continuation*"
+      - "internal/activities/decision_continuation*"
+      - "internal/decision/continuation*"
       - "internal/store/postgres/temporal_turn_identity.go"
       - "internal/store/postgres/migrations/0011_runtime_decision_checkpoint.up.sql"
       - "internal/run/decision_checkpoint.go"
@@ -63,6 +66,13 @@ jobs:
           grep -Fq '=== RUN   TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL' "${RUNNER_TEMP}/checkpoint-test.log"
           grep -Fq -- '--- PASS: TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL ' "${RUNNER_TEMP}/checkpoint-test.log"
 
+      - name: Real Temporal business continuation after a wake hint
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestBusinessWorkflowConsumesFencedDecision$' ./internal/store/postgres | tee "${RUNNER_TEMP}/continuation-test.log"
+          grep -Fq -- '--- PASS: TestBusinessWorkflowConsumesFencedDecision ' "${RUNNER_TEMP}/continuation-test.log"
+
 # Uses pinned Temporal CLI v1.10.0 with a file-backed SQLite dev server.
-# The test Workflow does not invoke Decision, external tools or protected
-# side effects. This does not bypass ACP subject/actor/policy gate G01/G05.
+# Local continuation test uses synthetic receipt digests; the pinned ACP
+# gate verifies actual Decision mTLS, source revocation and worker recovery.
+# No protected side effects or production workflow promotion.

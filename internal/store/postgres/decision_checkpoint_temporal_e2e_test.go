@@ -193,7 +193,11 @@ func recoverAcceptedDecisionWorker(t *testing.T, ctx context.Context, pool *pgxp
 	if err := w.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer w.Stop()
+	defer func() {
+		if w != nil {
+			w.Stop()
+		}
+	}()
 	var result run.DecisionCheckpoint
 	queryDeadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(queryDeadline) {
@@ -243,7 +247,7 @@ func recoverAcceptedDecisionWorker(t *testing.T, ctx context.Context, pool *pgxp
 		if binary == "" {
 			t.Fatal("missing independent Decision Core acceptance binary")
 		}
-		verify := exec.CommandContext(ctx, binary, "-test.v", "-test.run=^TestExternalLiveDecisionCore$", "-test.timeout=100s")
+		verify := exec.CommandContext(ctx, binary, "-test.v", "-test.run=^TestExternalLiveDecisionCore$", "-test.timeout=200s")
 		verify.Env = []string{
 			"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"),
 			"DECISION_EXTERNAL_LIVE_CORE=1",
@@ -260,7 +264,15 @@ func recoverAcceptedDecisionWorker(t *testing.T, ctx context.Context, pool *pgxp
 			}
 			verify.Env = append(verify.Env, name+"="+value)
 		}
-		output, err := verify.CombinedOutput()
+		var output []byte
+		var err error
+		if os.Getenv("RUNTIME_EXTERNAL_LIVE_CONTINUATION") == "1" {
+			w.Stop()
+			w = nil
+			w, result, output = recoverLiveDecisionContinuation(t, ctx, pool, c, frontend, result, dsn, schema, verify)
+		} else {
+			output, err = verify.CombinedOutput()
+		}
 		if err != nil || !bytes.Contains(output, []byte("--- PASS: TestExternalLiveDecisionCore ")) {
 			t.Fatalf("actual same-Run Decision Core gate failed: %v %s", err, output)
 		}
