@@ -57,10 +57,7 @@ jobs:
       - name: Real Worker SIGKILL after business checkpoint commit and before ACK
         run: |
           set -euo pipefail
-          go test -race -count=1 -v -run '^TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL with a file-backed SQLite dev server.
-# The test Workflows do not invoke Decision, external tools or protected
-# side effects. This does not bypass ACP subject/actor/policy gate G01/G05.
- ./internal/store/postgres | tee "${RUNNER_TEMP}/checkpoint-test.log"
+          go test -race -count=1 -v -run '^TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL$' ./internal/store/postgres | tee "${RUNNER_TEMP}/checkpoint-test.log"
           grep -Fq '=== RUN   TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL' "${RUNNER_TEMP}/checkpoint-test.log"
           grep -Fq -- '--- PASS: TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL ' "${RUNNER_TEMP}/checkpoint-test.log"
 
