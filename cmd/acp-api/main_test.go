@@ -36,3 +36,28 @@ func TestTLSConfigFailsClosedOnMissingCAOrServerKey(t *testing.T) {
 		t.Fatal("missing server certificate/CA unexpectedly accepted")
 	}
 }
+
+func TestSafetyAuthorityRequiresSeparateExplicitPeerAndTenant(t *testing.T) {
+	env := map[string]string{
+		"RUNTIME_DATABASE_URL": "postgres://localhost/runtime",
+		"RUNTIME_TLS_CERT":     "server.pem", "RUNTIME_TLS_KEY": "server.key", "RUNTIME_CLIENT_CA": "trusted-ca.pem",
+		"RUNTIME_ACP_SPIFFE_ID": "spiffe://example.org/acp",
+	}
+	for _, tc := range []struct {
+		peer   string
+		tenant string
+	}{
+		{"spiffe://example.org/guard", ""},
+		{"", "tenant-1"},
+		{"spiffe://example.org/acp", "tenant-1"},
+	} {
+		env["RUNTIME_SAFETY_SPIFFE_ID"], env["RUNTIME_SAFETY_TENANT"] = tc.peer, tc.tenant
+		if _, err := readConfig(func(key string) string { return env[key] }); err == nil {
+			t.Fatal("incomplete or conflicting safety delegation accepted")
+		}
+	}
+	env["RUNTIME_SAFETY_SPIFFE_ID"], env["RUNTIME_SAFETY_TENANT"] = "spiffe://example.org/guard", "tenant-1"
+	if _, err := readConfig(func(key string) string { return env[key] }); err != nil {
+		t.Fatal(err)
+	}
+}
