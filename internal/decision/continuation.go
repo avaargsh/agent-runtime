@@ -39,8 +39,8 @@ func NewContinuationClient(origin, peer string, roots *x509.CertPool, cert tls.C
 	tr := &http.Transport{
 		DisableKeepAlives: true,
 		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13,
-			RootCAs: roots.Clone(),
+			MinVersion:   tls.VersionTLS13,
+			RootCAs:      roots.Clone(),
 			Certificates: []tls.Certificate{cert},
 			VerifyConnection: func(s tls.ConnectionState) error {
 				if s.Version != tls.VersionTLS13 || len(s.VerifiedChains) == 0 || len(s.PeerCertificates) == 0 {

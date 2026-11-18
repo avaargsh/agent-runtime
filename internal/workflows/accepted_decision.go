@@ -12,7 +12,7 @@ const (
 	AcceptedDecisionWorkflow        = "AcceptedDecisionV1"
 	AcceptedDecisionQueue           = "runtime-accepted-decision-development-v1"
 	AcceptedDecisionCheckpointQuery = "decision-checkpoint"
-	AcceptedDecisionReadySignal = "decision-continuation-ready-v1"
+	AcceptedDecisionReadySignal     = "decision-continuation-ready-v1"
 )
 
 // AcceptedDecisionV1 is the reference-only first business stage of a
@@ -55,9 +55,9 @@ func AcceptedDecision(ctx workflow.Context, ref run.AcceptedDecisionRef) (run.De
 	if workflow.GetVersion(ctx, "verified-decision-continuation-v1", workflow.DefaultVersion, 1) == 1 {
 		wake := workflow.GetSignalChannel(ctx, AcceptedDecisionReadySignal)
 		continuationCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-			StartToCloseTimeout: 55 * time.Second,
+			StartToCloseTimeout:    55 * time.Second,
 			ScheduleToCloseTimeout: 115 * time.Second,
-			RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumAttempts: 2},
+			RetryPolicy:            &temporal.RetryPolicy{InitialInterval: time.Second, MaximumAttempts: 2},
 		})
 		for checkpoint.Phase == run.DecisionWaitingAuthority {
 			err = workflow.Await(ctx, func() bool { return wake.Len() > 0 })

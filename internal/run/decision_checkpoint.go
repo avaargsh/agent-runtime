@@ -14,7 +14,7 @@ import (
 
 const (
 	DecisionWaitingAuthority = "WAITING_AUTHORITY"
-	DecisionAccepted = "DECISION_ACCEPTED"
+	DecisionAccepted         = "DECISION_ACCEPTED"
 )
 
 var ErrDecisionPreparationDenied = errors.New("accepted decision preparation denied")
@@ -44,8 +44,8 @@ func (r AcceptedDecisionRef) Validate() error {
 	return nil
 }
 
-// DecisionCheckpoint is a committed preparation fact, not a permit,
-// DecisionRecord, business outcome, or independently verified result.
+// DecisionCheckpoint projects the immutable preparation fact and optional
+// accepted Decision references. Neither is a permit or business outcome.
 type DecisionCheckpoint struct {
 	AcceptedDecisionRef
 	ExecutionID    string
