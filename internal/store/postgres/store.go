@@ -276,6 +276,29 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := verifyACPBindingCatalog(ctx, tx); err != nil {
 		return err
 	}
+	// v11 is additive; accepted Runs are never backfilled with preparation
+	// evidence. Only the trusted business Activity may create a checkpoint.
+	var v11Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 11)",
+	).Scan(&v11Applied); err != nil {
+		return fmt.Errorf("read decision checkpoint migration ledger: %w", err)
+	}
+	if !v11Applied {
+		script, err := migrationFiles.ReadFile("migrations/0011_runtime_decision_checkpoint.up.sql")
+		if err != nil {
+			return fmt.Errorf("read decision checkpoint migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply decision checkpoint migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO runtime_schema_migrations (version) VALUES (11)"); err != nil {
+			return fmt.Errorf("record decision checkpoint migration: %w", err)
+		}
+	}
+	if err := verifyDecisionCheckpointCatalog(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}

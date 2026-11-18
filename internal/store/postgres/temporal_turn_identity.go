@@ -47,13 +47,31 @@ func (s *Store) GetOrCreateTemporalTurn(
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
+	identity, err := s.bindTemporalTurn(ctx, tx, tenantID, runID, workflowID, temporalExecutionID, turnIndex)
+	if err != nil {
+		return empty, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return empty, fmt.Errorf("commit Runtime Temporal identity binding: %w", err)
+	}
+	return identity, nil
+}
+
+// bindTemporalTurn is shared by the identity-only API and the atomic
+// accepted business checkpoint. Caller owns the transaction and validation.
+func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID, workflowID, temporalExecutionID string, turnIndex int32) (run.TemporalTurnIdentity, error) {
+	var empty run.TemporalTurnIdentity
+	rel, err := s.checkpointRelations()
+	if err != nil {
+		return empty, err
+	}
 	// Serialize all execution identity writes for one canonical Run. A
 	// different Temporal execution cannot win concurrently after a lost ACK.
 	var persistedStatus string
-	err = tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT r.status
-		FROM runs AS r
-		JOIN runtime_run_principal_snapshots AS p
+		FROM %s AS r
+		JOIN %s AS p
 		  ON p.run_id = r.run_id AND p.tenant_id = r.tenant_id
 		WHERE r.tenant_id = $1 AND r.run_id = $2::uuid
 		  AND r.workflow_id = $3
@@ -61,7 +79,7 @@ func (s *Store) GetOrCreateTemporalTurn(
 		  AND r.source_request_digest IS NOT NULL
 		  AND p.snapshot_version = 'acp-principal/v1'
 		FOR UPDATE OF r
-	`, tenantID, runID, workflowID).Scan(&persistedStatus)
+	`, rel.runs, rel.principals), tenantID, runID, workflowID).Scan(&persistedStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return empty, ErrTemporalTurnUntrustedRun
 	}
@@ -70,22 +88,22 @@ func (s *Store) GetOrCreateTemporalTurn(
 	}
 
 	var attemptID, existingExecution string
-	err = tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT run_attempt_id::text, temporal_execution_id::text
-		FROM runtime_run_attempts
+		FROM %s
 		WHERE tenant_id=$1 AND run_id=$2::uuid
 		FOR UPDATE
-	`, tenantID, runID).Scan(&attemptID, &existingExecution)
+	`, rel.attempts), tenantID, runID).Scan(&attemptID, &existingExecution)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if persistedStatus != string(run.StatusQueued) && persistedStatus != string(run.StatusRunning) {
 			return empty, ErrTemporalTurnUntrustedRun
 		}
 		attemptID = uuid.NewString()
-		_, err = tx.Exec(ctx, `
-			INSERT INTO runtime_run_attempts
+		_, err = tx.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s
 			(tenant_id, run_id, run_attempt_id, workflow_id, temporal_execution_id)
 			VALUES ($1,$2::uuid,$3::uuid,$4,$5::uuid)
-		`, tenantID, runID, attemptID, workflowID, temporalExecutionID)
+		`, rel.attempts), tenantID, runID, attemptID, workflowID, temporalExecutionID)
 		if err != nil {
 			return empty, fmt.Errorf("persist Runtime Temporal RunAttempt: %w", err)
 		}
@@ -96,24 +114,24 @@ func (s *Store) GetOrCreateTemporalTurn(
 	}
 
 	var turnID, invocationID string
-	err = tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT turn_id::text, invocation_id::text
-		FROM runtime_decision_turns
+		FROM %s
 		WHERE tenant_id=$1 AND run_id=$2::uuid
 		  AND run_attempt_id=$3::uuid AND turn_index=$4
 		FOR UPDATE
-	`, tenantID, runID, attemptID, turnIndex).Scan(&turnID, &invocationID)
+	`, rel.turns), tenantID, runID, attemptID, turnIndex).Scan(&turnID, &invocationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if persistedStatus != string(run.StatusQueued) && persistedStatus != string(run.StatusRunning) {
 			return empty, ErrTemporalTurnUntrustedRun
 		}
 		turnID = uuid.NewString()
 		invocationID = turnID
-		_, err = tx.Exec(ctx, `
-			INSERT INTO runtime_decision_turns
+		_, err = tx.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s
 			(tenant_id,run_id,run_attempt_id,turn_id,invocation_id,turn_index)
 			VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6)
-		`, tenantID, runID, attemptID, turnID, invocationID, turnIndex)
+		`, rel.turns), tenantID, runID, attemptID, turnID, invocationID, turnIndex)
 		if err != nil {
 			return empty, fmt.Errorf("persist Runtime Decision Turn: %w", err)
 		}
@@ -129,9 +147,6 @@ func (s *Store) GetOrCreateTemporalTurn(
 	}
 	if err := identity.Validate(); err != nil {
 		return empty, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return empty, fmt.Errorf("commit Runtime Temporal identity binding: %w", err)
 	}
 	return identity, nil
 }
