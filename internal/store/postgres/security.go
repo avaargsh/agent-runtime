@@ -146,7 +146,9 @@ func (s *Store) Append(ctx context.Context, event audit.Event) error {
 }
 
 // GetRunBreaker binds a RUN breaker lookup to the authoritative Run tenant.
-// The Run row is the tenant ownership source; scope_id alone is not sufficient.
+// The Run row is the tenant ownership and active-lifecycle source. This
+// execution gate rejects terminal Runs even if the retained breaker is CLOSED.
+// Forensic readers use GetBreaker, which does not imply execution eligibility.
 func (s *Store) GetRunBreaker(ctx context.Context, tenantID, runID string) (breaker.Record, error) {
 	if s == nil || s.pool == nil {
 		return breaker.Record{}, errors.New("PostgreSQL pool is unavailable")
@@ -166,6 +168,7 @@ func (s *Store) GetRunBreaker(ctx context.Context, tenantID, runID string) (brea
 			ON r.run_id::text = b.scope_id
 			AND b.scope_kind = 'RUN'
 		WHERE r.tenant_id=$1 AND r.run_id::text=$2
+		  AND r.status IN ('QUEUED','RUNNING')
 	`, tenantID, runID).Scan(
 		&record.Scope.Kind, &record.Scope.ID, &state, &record.Epoch,
 		&record.Version, &record.ReasonCode, &record.TriggerEventID,
