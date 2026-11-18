@@ -7,6 +7,12 @@ on:
       - "internal/store/postgres/runtime_start_outbox*"
       - "internal/store/postgres/development_start_dispatch_integration_test.go"
       - "internal/startdispatch/**"
+      - "internal/store/postgres/*decision_checkpoint*"
+      - "internal/store/postgres/temporal_turn_identity.go"
+      - "internal/store/postgres/migrations/0011_runtime_decision_checkpoint.up.sql"
+      - "internal/run/decision_checkpoint.go"
+      - "internal/activities/decision_preparation.go"
+      - "internal/workflows/accepted_decision.go"
       - "internal/store/postgres/migrations/0006_runtime_start_outbox_leases.up.sql"
       - ".github/workflows/runtime-temporal-id-e2e.yml"
   workflow_dispatch:
@@ -47,6 +53,16 @@ jobs:
         run: test "$(go env GOVERSION)" = "go1.26.11"
       - name: Real Temporal Server + Worker restart, durable Workflow ID and PostgreSQL fencing
         run: go test -race -count=1 -v -run '^(TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity|TestDevelopmentStartDispatcherRecoversCommittedWorkflowWithoutSecondStart|TestDevelopmentStartDispatcherDoesNotAcknowledgeUnrelatedWorkflow)$' ./internal/store/postgres
+
+      - name: Real Worker SIGKILL after business checkpoint commit and before ACK
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL with a file-backed SQLite dev server.
+# The test Workflows do not invoke Decision, external tools or protected
+# side effects. This does not bypass ACP subject/actor/policy gate G01/G05.
+ ./internal/store/postgres | tee "${RUNNER_TEMP}/checkpoint-test.log"
+          grep -Fq '=== RUN   TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL' "${RUNNER_TEMP}/checkpoint-test.log"
+          grep -Fq -- '--- PASS: TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL ' "${RUNNER_TEMP}/checkpoint-test.log"
 
 # Uses pinned Temporal CLI v1.10.0 with a file-backed SQLite dev server.
 # The test Workflows do not invoke Decision, external tools or protected
