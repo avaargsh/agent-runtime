@@ -54,19 +54,7 @@ jobs:
       - name: Verify patched Go toolchain
         run: test "$(go env GOVERSION)" = "go1.26.11"
       - name: Real Temporal Server + Worker restart, durable Workflow ID and PostgreSQL fencing
-        run: go test -race -count=1 -v -run '^(TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity|TestDevelopmentStartDispatcherRecoversCommittedWorkflowWithoutSecondStart|TestDevelopmentStartDispatcherDoesNotAcknowledgeUnrelatedWorkflow) ./internal/store/postgres
-
-      - name: Real Worker SIGKILL after business checkpoint commit and before ACK
-        run: |
-          set -euo pipefail
-          go test -race -count=1 -v -run '^TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL$' ./internal/store/postgres | tee "${RUNNER_TEMP}/checkpoint-test.log"
-          grep -Fq '=== RUN   TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL' "${RUNNER_TEMP}/checkpoint-test.log"
-          grep -Fq -- '--- PASS: TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL ' "${RUNNER_TEMP}/checkpoint-test.log"
-
-# Uses pinned Temporal CLI v1.10.0 with a file-backed SQLite dev server.
-# The test Workflow does not invoke Decision, external tools or protected
-# side effects. This does not bypass ACP subject/actor/policy gate G01/G05.
- ./internal/store/postgres
+        run: go test -race -count=1 -v -run '^(TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity|TestDevelopmentStartDispatcherRecoversCommittedWorkflowWithoutSecondStart|TestDevelopmentStartDispatcherDoesNotAcknowledgeUnrelatedWorkflow|TestBusinessStartDispatcherUsesRealCheckpointAndRecoversLostACK)$' ./internal/store/postgres
 
       - name: Real Worker SIGKILL after business checkpoint commit and before ACK
         run: |
