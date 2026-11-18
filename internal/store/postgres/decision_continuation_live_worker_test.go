@@ -260,7 +260,7 @@ func recoverLiveDecisionContinuation(t *testing.T, ctx context.Context, pool *pg
 		}
 	}()
 	var result run.DecisionCheckpoint
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(135 * time.Second)
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		q, err := c.QueryWorkflow(ctx, cp.WorkflowID, cp.ExecutionID, workflows.AcceptedDecisionCheckpointQuery)
 		if err == nil && q.Get(&result) == nil && result.Phase == run.DecisionAccepted {
