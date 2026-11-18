@@ -208,7 +208,7 @@ func TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL(t *testing.T) {
 		       (SELECT count(*) FROM runtime_run_attempts),
 		       (SELECT status FROM runs WHERE run_id=$1::uuid)
 	`, ref.RunID).Scan(&checkpoints, &turns, &attempts, &status); err != nil ||
-		checkpoints != 1 || turns != 1 || attempts != 1 || status != "QUEUED" {
+		checkpoints != 1 || turns != 1 || attempts != 1 || status != "RUNNING" {
 		t.Fatalf("recovery duplicated state or forged business success: %d/%d/%d/%s %v", checkpoints, turns, attempts, status, err)
 	}
 	history := c.GetWorkflowHistory(ctx, ref.WorkflowID, execution.GetRunID(), false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
@@ -228,6 +228,9 @@ func TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL(t *testing.T) {
 	var canceled *temporal.CanceledError
 	if err := c.GetWorkflow(ctx, ref.WorkflowID, execution.GetRunID()).Get(ctx, nil); !errors.As(err, &canceled) {
 		t.Fatalf("paused workflow was not canceled without business success: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT status FROM runs WHERE run_id=$1::uuid", ref.RunID).Scan(&status); err != nil || status != "CANCELLED" {
+		t.Fatalf("pre-effect Workflow cancellation did not reconcile Runtime lifecycle: %s %v", status, err)
 	}
 	t.Logf("SIGKILL recovered Run %s, Attempt %s, Turn %s, phase %s", ref.RunID, result.AttemptID, result.TurnID, result.Phase)
 }
