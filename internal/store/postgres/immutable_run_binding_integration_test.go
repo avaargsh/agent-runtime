@@ -46,3 +46,31 @@ func TestAcceptedRunBindingCannotBeChangedBeforeExecution(t *testing.T) {
 		t.Fatalf("original accepted execution binding changed: %+v %v", got, err)
 	}
 }
+
+func TestImmutableRunBindingMigrationRejectsDisabledTrigger(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "ALTER TABLE runs DISABLE TRIGGER runs_acp_binding_immutable"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx); err == nil {
+		t.Fatal("applied ledger hid disabled immutable Run binding trigger")
+	}
+}
+
+func TestImmutableRunBindingMigrationRejectsNarrowedTrigger(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	for _, sql := range []string{
+		"DROP TRIGGER runs_acp_binding_immutable ON runs",
+		"CREATE TRIGGER runs_acp_binding_immutable BEFORE UPDATE OF input OR DELETE ON runs FOR EACH ROW EXECUTE FUNCTION enforce_immutable_acp_run_binding()",
+		"ALTER TABLE runs ENABLE ALWAYS TRIGGER runs_acp_binding_immutable",
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Migrate(ctx); err == nil {
+		t.Fatal("narrowed UPDATE OF trigger passed catalog attestation")
+	}
+}
