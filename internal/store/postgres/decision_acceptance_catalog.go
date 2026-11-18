@@ -13,13 +13,13 @@ func verifyDecisionAcceptanceStructure(ctx context.Context, db harnessCatalogRea
     var columnCount, checkCount, keyCount int
     if err := db.QueryRow(ctx, `SELECT
         (SELECT count(*) FROM pg_catalog.pg_attribute a
-         WHERE a.attrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1))
+         WHERE a.attrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1::text))
            AND a.attnum>0 AND NOT a.attisdropped),
         (SELECT count(*) FROM pg_catalog.pg_constraint c
-         WHERE c.conrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1))
+         WHERE c.conrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1::text))
            AND c.contype='c'),
         (SELECT count(*) FROM pg_catalog.pg_constraint c
-         WHERE c.conrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1))
+         WHERE c.conrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1::text))
            AND c.contype IN ('p','u','f'))`, relation).Scan(&columnCount,&checkCount,&keyCount); err != nil {
         return fmt.Errorf("verify decision acceptance schema counts: %w",err)
     }
@@ -81,7 +81,7 @@ func verifyDecisionAcceptanceStructure(ctx context.Context, db harnessCatalogRea
         var matches int
         err := db.QueryRow(ctx, `SELECT count(*)
             FROM pg_catalog.pg_constraint c
-            WHERE c.conrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1))
+            WHERE c.conrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1::text))
               AND c.contype='c' AND c.convalidated
               AND NOT c.condeferrable AND NOT c.condeferred AND c.conislocal
               AND pg_catalog.regexp_replace(
@@ -120,7 +120,7 @@ func verifyDecisionAcceptanceStructure(ctx context.Context, db harnessCatalogRea
                 )
               ) OR (
                 c.contype='f' AND c.confrelid=pg_catalog.to_regclass(
-                   pg_catalog.format('%I.%I',current_schema(),$5))
+                   pg_catalog.format('%I.%I',current_schema(),$5::text))
                 AND c.confkey=(
                   SELECT pg_catalog.array_agg(a.attnum ORDER BY names.pos)::smallint[]
                   FROM pg_catalog.unnest(pg_catalog.string_to_array($6,',')) WITH ORDINALITY names(name,pos)
