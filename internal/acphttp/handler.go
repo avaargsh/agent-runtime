@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	maxBodyBytes = 256*1024 + 4096
-	acceptPath   = "/internal/v1/run-intents:accept"
-	acceptPathV2 = "/internal/v2/run-intents:accept"
-	inspectPath  = "/internal/v1/run-intents/"
+	maxBodyBytes  = 256*1024 + 4096
+	acceptPath    = "/internal/v1/run-intents:accept"
+	acceptPathV2  = "/internal/v2/run-intents:accept"
+	inspectPathV2 = "/internal/v2/run-intents:inspect"
+	inspectPath   = "/internal/v1/run-intents/"
 )
 
 type Store interface {
@@ -85,13 +86,13 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED")
 		return
 	}
-	if r.URL.Path == acceptPath || r.URL.Path == acceptPathV2 {
+	if r.URL.Path == acceptPath || r.URL.Path == acceptPathV2 || r.URL.Path == inspectPathV2 {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED")
 			return
 		}
-		h.accept(w, r, r.URL.Path == acceptPathV2)
+		h.handleEnvelope(w, r, r.URL.Path != acceptPath, r.URL.Path == inspectPathV2)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, inspectPath) {
@@ -130,7 +131,15 @@ type principalStore interface {
 	AcceptIntentWithPrincipal(context.Context, run.IntentStartRequest, run.PrincipalSnapshot) (run.IntentReceipt, error)
 }
 
-func (h *handler) accept(w http.ResponseWriter, r *http.Request, withPrincipal bool) {
+type principalInspectionStore interface {
+	LookupIntentWithPrincipal(context.Context, run.IntentStartRequest, run.PrincipalSnapshot) (run.IntentReceipt, error)
+}
+
+func (h *handler) handleEnvelope(w http.ResponseWriter, r *http.Request, withPrincipal, readOnly bool) {
+	if readOnly && r.URL.RawQuery != "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST")
+		return
+	}
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST")
@@ -167,8 +176,7 @@ func (h *handler) accept(w http.ResponseWriter, r *http.Request, withPrincipal b
 	if withPrincipal {
 		// Only the verified mTLS allowlisted service can assert initiating
 		// subject/actor/policy. Never accept an issuer supplied in JSON.
-		writer, ok := h.store.(principalStore)
-		if !ok || wire.Principal == nil {
+		if wire.Principal == nil {
 			writeError(w, http.StatusServiceUnavailable, "PRINCIPAL_STORE_UNAVAILABLE")
 			return
 		}
@@ -182,7 +190,29 @@ func (h *handler) accept(w http.ResponseWriter, r *http.Request, withPrincipal b
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST")
 			return
 		}
-		receipt, err = writer.AcceptIntentWithPrincipal(r.Context(), command, snapshot)
+		if readOnly {
+			reader, ok := h.store.(principalInspectionStore)
+			if !ok {
+				writeError(w, http.StatusServiceUnavailable, "PRINCIPAL_STORE_UNAVAILABLE")
+				return
+			}
+			receipt, err = reader.LookupIntentWithPrincipal(r.Context(), command, snapshot)
+			if errors.Is(err, run.ErrIntentNotFound) {
+				writeJSON(w, http.StatusOK, map[string]string{"status": "ABSENT_UNCERTAIN"})
+				return
+			}
+			if err == nil && receipt.Created {
+				writeError(w, http.StatusServiceUnavailable, "STORE_UNAVAILABLE")
+				return
+			}
+		} else {
+			writer, ok := h.store.(principalStore)
+			if !ok {
+				writeError(w, http.StatusServiceUnavailable, "PRINCIPAL_STORE_UNAVAILABLE")
+				return
+			}
+			receipt, err = writer.AcceptIntentWithPrincipal(r.Context(), command, snapshot)
+		}
 	} else {
 		// v1 is retained for read-only/legacy integration compatibility.
 		// Its Runs have no trusted principal and are not Start-eligible.

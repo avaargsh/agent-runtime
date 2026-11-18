@@ -254,6 +254,28 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := verifyHarnessClaimCatalog(ctx, tx); err != nil {
 		return err
 	}
+	// v10 protects the ACP-accepted binding at the ordinary SQL write boundary.
+	var v10Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 10)",
+	).Scan(&v10Applied); err != nil {
+		return fmt.Errorf("read immutable Run binding migration ledger: %w", err)
+	}
+	if !v10Applied {
+		script, err := migrationFiles.ReadFile("migrations/0010_immutable_acp_run_binding.up.sql")
+		if err != nil {
+			return fmt.Errorf("read immutable Run binding migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply immutable Run binding migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO runtime_schema_migrations (version) VALUES (10)"); err != nil {
+			return fmt.Errorf("record immutable Run binding migration: %w", err)
+		}
+	}
+	if err := verifyACPBindingCatalog(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
