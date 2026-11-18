@@ -213,6 +213,13 @@ func recoverLiveDecisionContinuation(t *testing.T, ctx context.Context, pool *pg
 			t.Logf("worker process evidence on failure:\n%s", workerLog.Bytes())
 		}
 	}()
+	// A reachable Decision server is not evidence that a DecisionRecord was
+	// committed. Wait for its separate real signed-source/ledger checks before
+	// delivering the hint. A wake contains no receipt or trusted data.
+	committed := string(waitContinuationFixture(t, ctx, filepath.Join(dir, "decision-committed"), 35*time.Second))
+	if committed == "" || !strings.HasPrefix(committed, "dec_") {
+		t.Fatal("missing independently committed DecisionRecord identity")
+	}
 	if err := c.SignalWorkflow(ctx, cp.WorkflowID, cp.ExecutionID, workflows.AcceptedDecisionReadySignal, nil); err != nil {
 		t.Fatal(err)
 	}
