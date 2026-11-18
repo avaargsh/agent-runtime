@@ -40,21 +40,28 @@ type handler struct {
 // NewHandler refuses to expose a privileged Run creation endpoint without
 // an exact trusted SPIFFE workload identity and a durable Store.
 func NewHandler(store Store, expectedSPIFFEID string) (http.Handler, error) {
-	u, err := url.Parse(expectedSPIFFEID)
-	if store == nil || err != nil || u.Scheme != "spiffe" || u.Host == "" ||
-		u.Path == "" || u.User != nil || u.Opaque != "" || u.RawPath != "" ||
-		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
-		u.String() != expectedSPIFFEID {
+	if store == nil || !validWorkloadIdentity(expectedSPIFFEID) {
 		return nil, errors.New("invalid ACP trust configuration")
 	}
 	h := &handler{store: store, identity: expectedSPIFFEID}
 	return http.HandlerFunc(h.serve), nil
 }
 
+func validWorkloadIdentity(identity string) bool {
+	u, err := url.Parse(identity)
+	return err == nil && u.Scheme == "spiffe" && u.Host != "" &&
+		u.Path != "" && u.User == nil && u.Opaque == "" && u.RawPath == "" &&
+		u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.String() == identity
+}
+
 // verifyPeer trusts only a peer in the transport's verified certificate
 // chains. This does not itself verify certificates: the TLS server must use
 // tls.RequireAndVerifyClientCert with a configured ClientCAs trust store.
 func (h *handler) verifyPeer(r *http.Request) bool {
+	return verifyWorkloadPeer(r, h.identity)
+}
+
+func verifyWorkloadPeer(r *http.Request, expectedIdentity string) bool {
 	if r.TLS == nil || !r.TLS.HandshakeComplete || r.TLS.Version < tls.VersionTLS13 ||
 		len(r.TLS.PeerCertificates) == 0 ||
 		len(r.TLS.VerifiedChains) == 0 {
@@ -70,7 +77,7 @@ func (h *handler) verifyPeer(r *http.Request) bool {
 			continue
 		}
 		c := chain[0]
-		if c == leaf || (len(c.Raw) > 0 && bytes.Equal(c.Raw, leaf.Raw)) {
+		if c != nil && (c == leaf || (len(c.Raw) > 0 && bytes.Equal(c.Raw, leaf.Raw))) {
 			verified = true
 			break
 		}
@@ -78,7 +85,7 @@ func (h *handler) verifyPeer(r *http.Request) bool {
 	if !verified {
 		return false
 	}
-	return leaf.URIs[0].String() == h.identity
+	return leaf.URIs[0].String() == expectedIdentity
 }
 
 func (h *handler) serve(w http.ResponseWriter, r *http.Request) {

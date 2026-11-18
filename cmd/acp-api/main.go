@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,25 +22,32 @@ import (
 )
 
 type config struct {
-	dsn      string
-	cert     string
-	key      string
-	ca       string
-	identity string
-	addr     string
+	dsn          string
+	cert         string
+	key          string
+	ca           string
+	identity     string
+	addr         string
+	safetyPeer   string
+	safetyTenant string
 }
 
 func readConfig(getenv func(string) string) (config, error) {
 	c := config{
-		dsn:      getenv("RUNTIME_DATABASE_URL"),
-		cert:     getenv("RUNTIME_TLS_CERT"),
-		key:      getenv("RUNTIME_TLS_KEY"),
-		ca:       getenv("RUNTIME_CLIENT_CA"),
-		identity: getenv("RUNTIME_ACP_SPIFFE_ID"),
-		addr:     getenv("RUNTIME_ACP_LISTEN_ADDR"),
+		dsn:          getenv("RUNTIME_DATABASE_URL"),
+		cert:         getenv("RUNTIME_TLS_CERT"),
+		key:          getenv("RUNTIME_TLS_KEY"),
+		ca:           getenv("RUNTIME_CLIENT_CA"),
+		identity:     getenv("RUNTIME_ACP_SPIFFE_ID"),
+		addr:         getenv("RUNTIME_ACP_LISTEN_ADDR"),
+		safetyPeer:   getenv("RUNTIME_SAFETY_SPIFFE_ID"),
+		safetyTenant: getenv("RUNTIME_SAFETY_TENANT"),
 	}
 	if c.dsn == "" || c.cert == "" || c.key == "" || c.ca == "" || c.identity == "" {
 		return config{}, errors.New("required mTLS and Runtime database configuration missing")
+	}
+	if (c.safetyPeer == "") != (c.safetyTenant == "") || (c.safetyPeer != "" && c.safetyPeer == c.identity) {
+		return config{}, errors.New("safety authority requires separate workload identity and tenant")
 	}
 	if c.addr == "" {
 		c.addr = "127.0.0.1:8443"
@@ -88,6 +96,21 @@ func runServer(ctx context.Context, c config) error {
 	handler, err := acphttp.NewHandler(store, c.identity)
 	if err != nil {
 		return err
+	}
+
+	if c.safetyPeer != "" {
+		safety, err := acphttp.NewRunSafetyHandler(store, c.safetyPeer, c.safetyTenant)
+		if err != nil {
+			return err
+		}
+		acpHandler := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, acphttp.RunSafetyPathPrefix) {
+				safety.ServeHTTP(w, r)
+				return
+			}
+			acpHandler.ServeHTTP(w, r)
+		})
 	}
 
 	srv := &http.Server{
