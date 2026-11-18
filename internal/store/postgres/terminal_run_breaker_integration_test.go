@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/avaargsh/agent-runtime/internal/breaker"
 )
@@ -43,5 +44,24 @@ func TestDecisionBreakerRejectsTerminalRunEvenWithClosedBreaker(t *testing.T) {
 				t.Fatalf("terminal admission check mutated the audit breaker: %+v %v", raw, err)
 			}
 		})
+	}
+}
+
+func TestTerminalRunCannotClaimPendingTemporalStart(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	receipt, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE runs SET status='CANCELLED', updated_at=clock_timestamp() WHERE run_id=$1::uuid", receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.ClaimRuntimeStart(ctx, "cancelled-worker", time.Minute); err != nil || found {
+		t.Fatalf("terminal Run obtained pending Temporal start claim: found=%v err=%v", found, err)
+	}
+	var starts int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_outbox WHERE aggregate_id=$1::uuid AND event_type='RUN_START_REQUESTED' AND delivered_at IS NULL AND attempts=0", receipt.RunID).Scan(&starts); err != nil || starts != 1 {
+		t.Fatalf("terminal gate discarded or claimed the unresolved start: %d %v", starts, err)
 	}
 }
