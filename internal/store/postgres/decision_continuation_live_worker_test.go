@@ -268,6 +268,27 @@ func recoverLiveDecisionContinuation(t *testing.T, ctx context.Context, pool *pg
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	if result.Phase != run.DecisionAccepted {
+		// Record the real Temporal scheduling and Activity failure history
+		// before treating a stuck continuation as an implementation success.
+		hctx, cancelHistory := context.WithTimeout(context.Background(), 5*time.Second)
+		history := c.GetWorkflowHistory(hctx, cp.WorkflowID, cp.ExecutionID, false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+		for n := 0; n < 100 && history.HasNext(); n++ {
+			event, historyErr := history.Next()
+			if historyErr != nil {
+				t.Logf("TRACE recovery Temporal history unavailable: %v", historyErr)
+				break
+			}
+			if event.GetActivityTaskFailedEventAttributes() != nil ||
+				event.GetActivityTaskTimedOutEventAttributes() != nil ||
+				event.GetActivityTaskCompletedEventAttributes() != nil ||
+				event.GetActivityTaskScheduledEventAttributes() != nil {
+				t.Logf("TRACE recovery Temporal event: type=%s id=%d failed=%v timeout=%v", event.GetEventType().String(),
+					event.GetEventId(), event.GetActivityTaskFailedEventAttributes(), event.GetActivityTaskTimedOutEventAttributes())
+			}
+		}
+		cancelHistory()
+	}
 	original := result
 	original.Phase = run.DecisionWaitingAuthority
 	original.DecisionID, original.RecordSHA256, original.PlanHash = "", "", ""
