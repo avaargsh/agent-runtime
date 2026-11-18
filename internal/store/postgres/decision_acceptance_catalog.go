@@ -73,7 +73,9 @@ func verifyDecisionAcceptanceStructure(ctx context.Context, db harnessCatalogRea
 	expectedChecks := []string{
 		"decision_id~'^dec_[0-9a-f]{64}$'",
 		"record_sha256~'^[0-9a-f]{64}$'",
-		"plan_hash~'^[0-9a-f]{64}
+		"plan_hash~'^[0-9a-f]{64}$'",
+		"breaker_epoch>0",
+		"breaker_version>0",
 		"receipt->>'schema_version'ISNOTDISTINCTFROM'decision.continuation.v1'",
 		"receipt->'authority'->>'tenant_id'ISNOTDISTINCTFROMtenant_id",
 		"receipt->'authority'->>'run_id'ISNOTDISTINCTFROMrun_id",
