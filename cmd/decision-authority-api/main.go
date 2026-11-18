@@ -55,7 +55,7 @@ func serve(ctx context.Context) error {
 		return errors.New("Runtime Decision database unavailable")
 	}
 	defer pool.Close()
-	pingCtx, cancel := context.WithTimeout(ctx, 5 * time.Second)
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	err = pool.Ping(pingCtx)
 	cancel()
 	if err != nil {
@@ -78,7 +78,7 @@ func serve(ctx context.Context) error {
 	case err := <-errs:
 		return err
 	case <-ctx.Done():
-		stopCtx, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(stopCtx); err != nil {
 			_ = srv.Close()
