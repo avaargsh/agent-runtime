@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	verifyPrefix = "/internal/v1/decision-turns/"
+	verifyPrefix    = "/internal/v1/decision-turns/"
 	maxReceiptBytes = 32 * 1024
 )
 
