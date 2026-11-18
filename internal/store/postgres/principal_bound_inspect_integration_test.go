@@ -56,8 +56,8 @@ func TestPrincipalBoundInspectionRejectsConflictingAcceptanceWithoutWrites(t *te
 	w := call(command, principal)
 	var found struct {
 		Status  string `json:"status"`
-		RunID string `json:"run_id"`
-		Created bool `json:"created"`
+		RunID   string `json:"run_id"`
+		Created bool   `json:"created"`
 	}
 	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &found) != nil ||
 		found.Status != "FOUND" || found.RunID != receipt.RunID || found.Created {
