@@ -117,6 +117,11 @@ func TestDevelopmentStartDispatcherDoesNotAcknowledgeUnrelatedWorkflow(t *testin
 	if err == nil || got.Delivered {
 		t.Fatalf("unrelated Workflow was treated as accepted: %+v %v", got, err)
 	}
+	time.Sleep(20 * time.Millisecond)
+	recovered, err := startdispatch.DispatchOnce(ctx, store, c, "worker-two", time.Minute, time.Millisecond)
+	if !errors.Is(err, startdispatch.ErrExecutionConflict) || recovered.Delivered {
+		t.Fatalf("recovery accepted unrelated start history: %+v %v", recovered, err)
+	}
 	var delivered int
 	if err := pool.QueryRow(ctx, "SELECT count(delivered_at) FROM runtime_outbox WHERE aggregate_id=$1::uuid AND event_type='RUN_START_REQUESTED'", receipt.RunID).Scan(&delivered); err != nil || delivered != 0 {
 		t.Fatalf("unrelated execution acknowledged durable event: %d %v", delivered, err)
