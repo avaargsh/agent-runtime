@@ -29,7 +29,9 @@ func TestDecisionAuthorityRealMTLSAndPostgreSQL(t *testing.T) {
 	ctx := context.Background()
 	command := testIntent()
 	command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"errors"}`)
-	accepted, err := store.AcceptIntentWithPrincipal(ctx, command, trustedSnapshot())
+	principal := trustedSnapshot()
+	principal.ActorID = principal.SubjectID
+	accepted, err := store.AcceptIntentWithPrincipal(ctx, command, principal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +131,9 @@ func TestDecisionAuthorityRealMTLSAndPostgreSQL(t *testing.T) {
 		}
 		return res.StatusCode, string(b), err
 	}
-	path := func(id, invocation string) string { return acphttp.DecisionAuthorityPath + id + "?invocation_id=" + invocation }
+	path := func(id, invocation string) string {
+		return acphttp.DecisionAuthorityPath + id + "?invocation_id=" + invocation
+	}
 	assertStatus := func(c *http.Client, p string, want int) string {
 		t.Helper()
 		code, body, err := call(c, p)
