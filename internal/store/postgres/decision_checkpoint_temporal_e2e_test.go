@@ -17,6 +17,7 @@ import (
 	"github.com/avaargsh/agent-runtime/internal/workflows"
 	"github.com/jackc/pgx/v5/pgxpool"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/testsuite"
@@ -182,8 +183,17 @@ func TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL(t *testing.T) {
 	}
 	defer w.Stop()
 	var result run.DecisionCheckpoint
-	if err := c.GetWorkflow(ctx, ref.WorkflowID, execution.GetRunID()).Get(ctx, &result); err != nil {
-		t.Fatal(err)
+	queryDeadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(queryDeadline) {
+		value, err := c.QueryWorkflow(ctx, ref.WorkflowID, execution.GetRunID(), workflows.AcceptedDecisionCheckpointQuery)
+		if err == nil && value.Get(&result) == nil && result.Phase == run.DecisionWaitingAuthority {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	desc, err := c.DescribeWorkflowExecution(ctx, ref.WorkflowID, execution.GetRunID())
+	if err != nil || desc.GetWorkflowExecutionInfo().GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		t.Fatalf("business Workflow did not remain paused at authority gate: %v", err)
 	}
 	if result.AcceptedDecisionRef != ref || result.AttemptID != committedAttempt || result.TurnID != committedTurn ||
 		result.InputDigest != committedDigest || result.ExecutionID != execution.GetRunID() ||
@@ -211,6 +221,13 @@ func TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL(t *testing.T) {
 		if err != nil || bytes.Contains(encoded, []byte(canary)) {
 			t.Fatal("raw business input escaped into Temporal history")
 		}
+	}
+	if err := c.CancelWorkflow(ctx, ref.WorkflowID, execution.GetRunID()); err != nil {
+		t.Fatal(err)
+	}
+	var canceled *temporal.CanceledError
+	if err := c.GetWorkflow(ctx, ref.WorkflowID, execution.GetRunID()).Get(ctx, nil); !errors.As(err, &canceled) {
+		t.Fatalf("paused workflow was not canceled without business success: %v", err)
 	}
 	t.Logf("SIGKILL recovered Run %s, Attempt %s, Turn %s, phase %s", ref.RunID, result.AttemptID, result.TurnID, result.Phase)
 }
