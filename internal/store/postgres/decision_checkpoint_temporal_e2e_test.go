@@ -234,6 +234,38 @@ func recoverAcceptedDecisionWorker(t *testing.T, ctx context.Context, pool *pgxp
 			t.Fatal("raw business input escaped into Temporal history")
 		}
 	}
+	// In the source-pinned external ACP gate, run the independently built
+	// Decision acceptance driver while this exact recovered business Turn
+	// is still RUNNING. The driver uses real network authority, not local
+	// fixture claims, and may not update Runtime lifecycle or execute effects.
+	if os.Getenv("RUNTIME_EXTERNAL_LIVE_DECISION") == "1" {
+		binary := os.Getenv("DECISION_EXTERNAL_LIVE_CORE_BIN")
+		if binary == "" {
+			t.Fatal("missing independent Decision Core acceptance binary")
+		}
+		verify := exec.CommandContext(ctx, binary, "-test.v", "-test.run=^TestExternalLiveDecisionCore$", "-test.timeout=100s")
+		verify.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"),
+			"DECISION_EXTERNAL_LIVE_CORE=1",
+			"DECISION_LIVE_TENANT=" + ref.TenantID, "DECISION_LIVE_RUN=" + ref.RunID,
+			"DECISION_LIVE_INVOCATION=" + result.TurnID,
+		}
+		for _, name := range []string{"DECISION_LIVE_AGENT", "DECISION_LIVE_ROOTS",
+			"DECISION_LIVE_CLIENT_CA", "DECISION_LIVE_CLIENT_CERT", "DECISION_LIVE_CLIENT_KEY",
+			"DECISION_LIVE_ACP_PUBLIC_KEY", "DECISION_LIVE_RUNTIME_ORIGIN",
+			"DECISION_LIVE_ACP_ORIGIN", "DECISION_LIVE_DATABASE_URL"} {
+			value := os.Getenv(name)
+			if value == "" {
+				t.Fatalf("missing independent Decision driver configuration %s", name)
+			}
+			verify.Env = append(verify.Env, name+"="+value)
+		}
+		output, err := verify.CombinedOutput()
+		if err != nil || !bytes.Contains(output, []byte("--- PASS: TestExternalLiveDecisionCore ")) {
+			t.Fatalf("actual same-Run Decision Core gate failed: %v %s", err, output)
+		}
+		t.Logf("same-Run independent Decision Core evidence:\n%s", output)
+	}
 	if err := c.CancelWorkflow(ctx, ref.WorkflowID, executionID); err != nil {
 		t.Fatal(err)
 	}
