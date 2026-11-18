@@ -239,7 +239,17 @@ func recoverLiveDecisionContinuation(t *testing.T, ctx context.Context, pool *pg
 	w := worker.New(c, workflows.AcceptedDecisionQueue, worker.Options{})
 	w.RegisterWorkflowWithOptions(workflows.AcceptedDecision, workflow.RegisterOptions{Name: workflows.AcceptedDecisionWorkflow})
 	w.RegisterActivity(&activities.DecisionPreparation{Store: store})
-	w.RegisterActivity(actual)
+    // Record the real post-SIGKILL attempt result, not merely the Workflow
+    // projection. Errors here are the evidence needed to fix lost-ACK recovery.
+    w.RegisterActivityWithOptions(func(ctx context.Context, cp run.DecisionCheckpoint) (run.DecisionCheckpoint, error) {
+        got, err := actual.ContinueAcceptedDecision(ctx, cp)
+        if err != nil {
+            t.Logf("TRACE recovered Decision Activity denied: %v", err)
+        } else {
+            t.Logf("TRACE recovered Decision Activity accepted: id=%s record=%s", got.DecisionID, got.RecordSHA256)
+        }
+        return got, err
+    }, activity.RegisterOptions{Name: "ContinueAcceptedDecision"})
 	if err := w.Start(); err != nil {
 		t.Fatal(err)
 	}
