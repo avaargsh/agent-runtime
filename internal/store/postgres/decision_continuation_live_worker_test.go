@@ -213,6 +213,13 @@ func recoverLiveDecisionContinuation(t *testing.T, ctx context.Context, pool *pg
 			t.Logf("worker process evidence on failure:\n%s", workerLog.Bytes())
 		}
 	}()
+	// A reachable Decision server is not evidence that a DecisionRecord was
+	// committed. Wait for its separate real signed-source/ledger checks before
+	// delivering the hint. A wake contains no receipt or trusted data.
+	committed := string(waitContinuationFixture(t, ctx, filepath.Join(dir, "decision-committed"), 35*time.Second))
+	if committed == "" || !strings.HasPrefix(committed, "dec_") {
+		t.Fatal("missing independently committed DecisionRecord identity")
+	}
 	if err := c.SignalWorkflow(ctx, cp.WorkflowID, cp.ExecutionID, workflows.AcceptedDecisionReadySignal, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +246,17 @@ func recoverLiveDecisionContinuation(t *testing.T, ctx context.Context, pool *pg
 	w := worker.New(c, workflows.AcceptedDecisionQueue, worker.Options{})
 	w.RegisterWorkflowWithOptions(workflows.AcceptedDecision, workflow.RegisterOptions{Name: workflows.AcceptedDecisionWorkflow})
 	w.RegisterActivity(&activities.DecisionPreparation{Store: store})
-	w.RegisterActivity(actual)
+	// Record the real post-SIGKILL attempt result, not merely the Workflow
+	// projection. Errors here are the evidence needed to fix lost-ACK recovery.
+	w.RegisterActivityWithOptions(func(ctx context.Context, cp run.DecisionCheckpoint) (run.DecisionCheckpoint, error) {
+		got, err := actual.ContinueAcceptedDecision(ctx, cp)
+		if err != nil {
+			t.Logf("TRACE recovered Decision Activity denied: %v", err)
+		} else {
+			t.Logf("TRACE recovered Decision Activity accepted: id=%s record=%s", got.DecisionID, got.RecordSHA256)
+		}
+		return got, err
+	}, activity.RegisterOptions{Name: "ContinueAcceptedDecision"})
 	if err := w.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -250,13 +267,34 @@ func recoverLiveDecisionContinuation(t *testing.T, ctx context.Context, pool *pg
 		}
 	}()
 	var result run.DecisionCheckpoint
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(135 * time.Second)
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		q, err := c.QueryWorkflow(ctx, cp.WorkflowID, cp.ExecutionID, workflows.AcceptedDecisionCheckpointQuery)
 		if err == nil && q.Get(&result) == nil && result.Phase == run.DecisionAccepted {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	if result.Phase != run.DecisionAccepted {
+		// Record the real Temporal scheduling and Activity failure history
+		// before treating a stuck continuation as an implementation success.
+		hctx, cancelHistory := context.WithTimeout(context.Background(), 5*time.Second)
+		history := c.GetWorkflowHistory(hctx, cp.WorkflowID, cp.ExecutionID, false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+		for n := 0; n < 100 && history.HasNext(); n++ {
+			event, historyErr := history.Next()
+			if historyErr != nil {
+				t.Logf("TRACE recovery Temporal history unavailable: %v", historyErr)
+				break
+			}
+			if event.GetActivityTaskFailedEventAttributes() != nil ||
+				event.GetActivityTaskTimedOutEventAttributes() != nil ||
+				event.GetActivityTaskCompletedEventAttributes() != nil ||
+				event.GetActivityTaskScheduledEventAttributes() != nil {
+				t.Logf("TRACE recovery Temporal event: type=%s id=%d failed=%v timeout=%v", event.GetEventType().String(),
+					event.GetEventId(), event.GetActivityTaskFailedEventAttributes(), event.GetActivityTaskTimedOutEventAttributes())
+			}
+		}
+		cancelHistory()
 	}
 	original := result
 	original.Phase = run.DecisionWaitingAuthority
