@@ -12,11 +12,12 @@ const (
 	AcceptedDecisionWorkflow        = "AcceptedDecisionV1"
 	AcceptedDecisionQueue           = "runtime-accepted-decision-development-v1"
 	AcceptedDecisionCheckpointQuery = "decision-checkpoint"
+	AcceptedDecisionReadySignal = "decision-continuation-ready-v1"
 )
 
 // AcceptedDecisionV1 is the reference-only first business stage of a
-// decision.v1 Run. It remains durably paused at the authority gate. No
-// signal or update can grant authority until a verified adapter is wired.
+// decision.v1 Run. A versioned wake hint only schedules a fresh authority
+// read/CAS; no signal can grant authority or carry a DecisionRecord.
 // Do not dispatch production Start Outbox events to this development queue.
 func AcceptedDecision(ctx workflow.Context, ref run.AcceptedDecisionRef) (run.DecisionCheckpoint, error) {
 	if ref.Validate() != nil || workflow.GetInfo(ctx).WorkflowExecution.ID != ref.WorkflowID {
@@ -48,10 +49,52 @@ func AcceptedDecision(ctx workflow.Context, ref run.AcceptedDecisionRef) (run.De
 		return run.DecisionCheckpoint{}, temporal.NewNonRetryableApplicationError(
 			"invalid committed decision checkpoint", "DECISION_PREPARATION_DENIED", nil)
 	}
-	// Do not complete the canonical Workflow ID with a nonterminal stage.
-	// A future versioned, independently authorized continuation must resume
-	// here; until then only cancellation or the execution deadline ends it.
-	if err := workflow.Await(ctx, func() bool { return false }); err != nil {
+	// Existing histories without the version marker retain their original
+	// waiting behavior. New development Runs may be woken by an operator
+	// hint; the payload is discarded and never passed to the Activity.
+	if workflow.GetVersion(ctx, "verified-decision-continuation-v1", workflow.DefaultVersion, 1) == 1 {
+		wake := workflow.GetSignalChannel(ctx, AcceptedDecisionReadySignal)
+		continuationCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: 55 * time.Second,
+			ScheduleToCloseTimeout: 115 * time.Second,
+			RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumAttempts: 2},
+		})
+		for checkpoint.Phase == run.DecisionWaitingAuthority {
+			err = workflow.Await(ctx, func() bool { return wake.Len() > 0 })
+			if err != nil {
+				break
+			}
+			wake.ReceiveAsync(nil)
+			var accepted run.DecisionCheckpoint
+			err = workflow.ExecuteActivity(continuationCtx, "ContinueAcceptedDecision", checkpoint).Get(ctx, &accepted)
+			if err != nil {
+				if ctx.Err() != nil {
+					break
+				}
+				// Unavailable/revoked authority never releases the business
+				// gate. A later wake may retry only the read and local CAS.
+				continue
+			}
+			original := accepted
+			original.Phase = run.DecisionWaitingAuthority
+			original.DecisionID, original.RecordSHA256, original.PlanHash = "", "", ""
+			if original != checkpoint || accepted.Phase != run.DecisionAccepted ||
+				accepted.DecisionID == "" || len(accepted.RecordSHA256) != 64 || len(accepted.PlanHash) != 64 {
+				continue
+			}
+			checkpoint = accepted
+		}
+	}
+	// Even a committed Decision acceptance is not business success or a
+	// protected-effect permit. Stay RUNNING until pre-effect cancellation
+	// or a separately verified execution stage is implemented.
+	if ctx.Err() == nil {
+		err = workflow.Await(ctx, func() bool { return false })
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
 		if temporal.IsCanceledError(err) {
 			// The original context is canceled. Use a bounded disconnected
 			// Activity to record the exact pre-effect cancellation before

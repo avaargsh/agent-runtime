@@ -12,7 +12,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const DecisionWaitingAuthority = "WAITING_AUTHORITY"
+const (
+	DecisionWaitingAuthority = "WAITING_AUTHORITY"
+	DecisionAccepted = "DECISION_ACCEPTED"
+)
 
 var ErrDecisionPreparationDenied = errors.New("accepted decision preparation denied")
 var decisionService = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
@@ -52,6 +55,9 @@ type DecisionCheckpoint struct {
 	PolicyRevision string
 	ConfigDigest   string
 	Phase          string
+	DecisionID     string `json:",omitempty"`
+	RecordSHA256   string `json:",omitempty"`
+	PlanHash       string `json:",omitempty"`
 }
 
 // The current Go Decision Core input schema targets read-only SRE triage.

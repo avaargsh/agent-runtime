@@ -39,7 +39,7 @@ func TestBusinessWorkflowConsumesFencedDecision(t *testing.T) {
 		RunIntentID: accepted.RunIntentID, RequestDigest: accepted.RequestDigest}
 	server, err := testsuite.StartDevServer(ctx, testsuite.DevServerOptions{
 		CachedDownload: testsuite.CachedDownload{Version: "v1.10.0"},
-		DBFilename: filepath.Join(t.TempDir(), "continuation.db"), LogLevel: "error",
+		DBFilename:     filepath.Join(t.TempDir(), "continuation.db"), LogLevel: "error",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +60,7 @@ func TestBusinessWorkflowConsumesFencedDecision(t *testing.T) {
 			return run.DecisionCheckpoint{}, err
 		}
 		cp.Phase = "DECISION_ACCEPTED"
+		cp.DecisionID, cp.RecordSHA256, cp.PlanHash = receipt.DecisionID, receipt.RecordSHA256, receipt.PlanHash
 		return cp, nil
 	}, activity.RegisterOptions{Name: "ContinueAcceptedDecision"})
 	if err := w.Start(); err != nil {
@@ -90,7 +91,7 @@ func TestBusinessWorkflowConsumesFencedDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	cp := waitPhase("DECISION_ACCEPTED")
-	if cp.RunID != initial.RunID || cp.ExecutionID != initial.ExecutionID || cp.AttemptID != initial.AttemptID || cp.TurnID != initial.TurnID {
+	if cp.RunID != initial.RunID || cp.ExecutionID != initial.ExecutionID || cp.AttemptID != initial.AttemptID || cp.TurnID != initial.TurnID || cp.DecisionID == "" || cp.RecordSHA256 == "" || cp.PlanHash == "" {
 		t.Fatal("continuation changed canonical execution")
 	}
 	var facts int
