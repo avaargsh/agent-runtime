@@ -100,7 +100,12 @@ func verifyDecisionAcceptanceStructure(ctx context.Context, db harnessCatalogRea
 			return fmt.Errorf("verify decision acceptance CHECK: %w", err)
 		}
 		if matches != 1 {
-			return fmt.Errorf("decision acceptance CHECK drift: %s (matches=%d)", expected, matches)
+			var observed string
+			_ = db.QueryRow(ctx, `SELECT COALESCE(string_agg(pg_catalog.pg_get_expr(c.conbin,c.conrelid), ' | ' ORDER BY c.conname),'')
+                FROM pg_catalog.pg_constraint c
+                WHERE c.conrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1::text))
+                  AND c.contype='c'`, relation).Scan(&observed)
+			return fmt.Errorf("decision acceptance CHECK drift: %s (matches=%d; actual=%s)", expected, matches, observed)
 		}
 	}
 	keys := []struct{ name, kind, local, target, remote string }{
