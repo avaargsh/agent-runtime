@@ -34,6 +34,8 @@ type RuntimeStartLease struct {
 }
 
 // ClaimRuntimeStart leases one committed ACP-originated start record.
+// Terminal Runs are not claimable, and their unresolved Outbox evidence is
+// retained for explicit recovery. This is not cancellation of a prior Start.
 // It does not execute or authorize a Run. Starting Temporal still requires
 // the separately ratified principal/policy snapshot.
 func (s *Store) ClaimRuntimeStart(ctx context.Context, owner string, ttl time.Duration) (RuntimeStartLease, bool, error) {
@@ -52,6 +54,7 @@ func (s *Store) ClaimRuntimeStart(ctx context.Context, owner string, ttl time.Du
 			JOIN runtime_run_principal_snapshots AS p
 			  ON p.run_id = r.run_id AND p.tenant_id = r.tenant_id
 			WHERE o.event_type = 'RUN_START_REQUESTED'
+			  AND r.status IN ('QUEUED','RUNNING')
 			  AND r.run_intent_id IS NOT NULL
 			  AND r.source_request_digest IS NOT NULL
 			  AND p.snapshot_version = 'acp-principal/v1'
