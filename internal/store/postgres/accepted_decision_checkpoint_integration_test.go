@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
@@ -94,5 +95,81 @@ func TestAcceptedDecisionCheckpointRejectsInvalidObjectiveBeforeAllocatingTurn(t
 				t.Fatalf("invalid input allocated a decision turn: %d %v", count, err)
 			}
 		})
+	}
+}
+
+func TestAcceptedDecisionCheckpointRollbackLeavesNoExecutionIdentity(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	command := testIntent()
+	command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"errors"}`)
+	receipt, err := store.AcceptIntentWithPrincipal(ctx, command, trustedSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := run.AcceptedDecisionRef{TenantID: receipt.TenantID, RunID: receipt.RunID, WorkflowID: receipt.WorkflowID,
+		RunIntentID: receipt.RunIntentID, RequestDigest: receipt.RequestDigest}
+	for _, sql := range []string{
+		"CREATE FUNCTION reject_checkpoint_insert() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''forced checkpoint insert failure''; END;'",
+		"CREATE TRIGGER reject_checkpoint_insert BEFORE INSERT ON runtime_decision_checkpoints FOR EACH ROW EXECUTE FUNCTION reject_checkpoint_insert()",
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.PrepareAcceptedDecision(ctx, ref, "11111111-2222-4333-8444-555555555555"); err == nil {
+		t.Fatal("preparation succeeded despite mandatory checkpoint failure")
+	}
+	var checkpoints, attempts, turns int
+	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM runtime_decision_checkpoints), (SELECT count(*) FROM runtime_run_attempts), (SELECT count(*) FROM runtime_decision_turns)").Scan(&checkpoints, &attempts, &turns); err != nil || checkpoints != 0 || attempts != 0 || turns != 0 {
+		t.Fatalf("failed preparation committed orphan identity: %d/%d/%d %v", checkpoints, attempts, turns, err)
+	}
+	if _, err := pool.Exec(ctx, "DROP TRIGGER reject_checkpoint_insert ON runtime_decision_checkpoints"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PrepareAcceptedDecision(ctx, ref, "11111111-2222-4333-8444-555555555555"); err != nil {
+		t.Fatalf("local transaction rollback was not recoverable: %v", err)
+	}
+}
+
+func TestAcceptedDecisionCheckpointRejectsOpenedBreaker(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	command := testIntent()
+	command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"saturation"}`)
+	receipt, err := store.AcceptIntentWithPrincipal(ctx, command, trustedSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := run.AcceptedDecisionRef{TenantID: receipt.TenantID, RunID: receipt.RunID, WorkflowID: receipt.WorkflowID,
+		RunIntentID: receipt.RunIntentID, RequestDigest: receipt.RequestDigest}
+	initial, err := store.GetRunBreaker(ctx, ref.TenantID, ref.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := initial.Trip("UNAUTHORIZED_EGRESS", "checkpoint-breaker-test", initial.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, initial.Version, opened); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PrepareAcceptedDecision(ctx, ref, "11111111-2222-4333-8444-555555555555"); !errors.Is(err, run.ErrDecisionPreparationDenied) {
+		t.Fatalf("opened breaker did not deny preparation: %v", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_run_attempts").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("denied preparation allocated attempt: %d %v", count, err)
+	}
+}
+
+func TestDecisionCheckpointMigrationRejectsDisabledTruncateFence(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "ALTER TABLE runtime_decision_checkpoints DISABLE TRIGGER runtime_decision_checkpoint_no_truncate"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx); err == nil {
+		t.Fatal("migration ledger concealed weakened checkpoint protection")
 	}
 }
