@@ -12,15 +12,15 @@ CREATE TABLE runtime_decision_acceptances (
     receipt JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     FOREIGN KEY (tenant_id, run_id) REFERENCES runs (tenant_id, run_id) ON DELETE RESTRICT,
-    CHECK (receipt->>'schema_version' = 'decision.continuation.v1'),
-    CHECK (receipt->'authority'->>'tenant_id' = tenant_id),
-    CHECK (receipt->'authority'->>'run_id' = run_id::text),
-    CHECK (receipt->'authority'->>'turn_id' = turn_id::text),
-    CHECK (receipt->>'decision_id' = decision_id),
-    CHECK (receipt->>'record_sha256' = record_sha256),
-    CHECK (receipt->>'plan_hash' = plan_hash),
-    CHECK (receipt->'authority'->>'breaker_epoch' = breaker_epoch::text),
-    CHECK (receipt->'authority'->>'breaker_version' = breaker_version::text)
+    CHECK (receipt->>'schema_version' IS NOT DISTINCT FROM 'decision.continuation.v1'),
+    CHECK (receipt->'authority'->>'tenant_id' IS NOT DISTINCT FROM tenant_id),
+    CHECK (receipt->'authority'->>'run_id' IS NOT DISTINCT FROM run_id::text),
+    CHECK (receipt->'authority'->>'turn_id' IS NOT DISTINCT FROM turn_id::text),
+    CHECK (receipt->>'decision_id' IS NOT DISTINCT FROM decision_id),
+    CHECK (receipt->>'record_sha256' IS NOT DISTINCT FROM record_sha256),
+    CHECK (receipt->>'plan_hash' IS NOT DISTINCT FROM plan_hash),
+    CHECK (receipt->'authority'->>'breaker_epoch' IS NOT DISTINCT FROM breaker_epoch::text),
+    CHECK (receipt->'authority'->>'breaker_version' IS NOT DISTINCT FROM breaker_version::text)
 );
 
 CREATE TRIGGER runtime_decision_acceptance_no_mutation
