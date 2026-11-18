@@ -6,7 +6,7 @@ import (
 
 func TestConfigurationRequiresAuthenticatedControlPlaneAndDatabase(t *testing.T) {
 	base := map[string]string{
-		"RUNTIME_DATABASE_URL": "postgres://localhost/runtime",
+		"RUNTIME_DATABASE_URL":  "postgres://localhost/runtime",
 		"RUNTIME_TLS_CERT":      "server.pem",
 		"RUNTIME_TLS_KEY":       "server.key",
 		"RUNTIME_CLIENT_CA":     "trusted-acp-ca.pem",
@@ -39,7 +39,7 @@ func TestTLSConfigFailsClosedOnMissingCAOrServerKey(t *testing.T) {
 
 func TestSafetyAuthorityRequiresSeparateExplicitPeerAndTenant(t *testing.T) {
 	env := map[string]string{
-		"RUNTIME_DATABASE_URL":  "postgres://localhost/runtime",
+		"RUNTIME_DATABASE_URL": "postgres://localhost/runtime",
 		"RUNTIME_TLS_CERT":     "server.pem", "RUNTIME_TLS_KEY": "server.key", "RUNTIME_CLIENT_CA": "trusted-ca.pem",
 		"RUNTIME_ACP_SPIFFE_ID": "spiffe://example.org/acp",
 	}
