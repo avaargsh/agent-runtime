@@ -15,6 +15,7 @@ func TestDecisionAuthorityRequiresCurrentCommittedTurn(t *testing.T) {
 	command := testIntent()
 	command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
 	principal := trustedSnapshot()
+	principal.ActorID = principal.SubjectID
 	receipt, err := store.AcceptIntentWithPrincipal(ctx, command, principal)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +71,9 @@ func TestDecisionAuthorityRejectsCancelledRun(t *testing.T) {
 	ctx := context.Background()
 	command := testIntent()
 	command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"errors"}`)
-	receipt, err := store.AcceptIntentWithPrincipal(ctx, command, trustedSnapshot())
+	principal := trustedSnapshot()
+	principal.ActorID = principal.SubjectID
+	receipt, err := store.AcceptIntentWithPrincipal(ctx, command, principal)
 	if err != nil {
 		t.Fatal(err)
 	}
