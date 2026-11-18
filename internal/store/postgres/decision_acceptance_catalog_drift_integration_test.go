@@ -21,15 +21,15 @@ func TestDecisionAcceptanceMigrationRejectsConstraintDrift(t *testing.T) {
 		},
 		{
 			name: "missing turn reference",
-			ddl: []string{"ALTER TABLE runtime_decision_acceptances DROP CONSTRAINT runtime_decision_acceptances_turn_id_fkey"},
+			ddl:  []string{"ALTER TABLE runtime_decision_acceptances DROP CONSTRAINT runtime_decision_acceptances_turn_id_fkey"},
 		},
 		{
 			name: "missing unique turn binding",
-			ddl: []string{"ALTER TABLE runtime_decision_acceptances DROP CONSTRAINT runtime_decision_acceptances_turn_id_key"},
+			ddl:  []string{"ALTER TABLE runtime_decision_acceptances DROP CONSTRAINT runtime_decision_acceptances_turn_id_key"},
 		},
 		{
 			name: "nullable immutable receipt",
-			ddl: []string{"ALTER TABLE runtime_decision_acceptances ALTER COLUMN receipt DROP NOT NULL"},
+			ddl:  []string{"ALTER TABLE runtime_decision_acceptances ALTER COLUMN receipt DROP NOT NULL"},
 		},
 	}
 	for _, tc := range cases {
