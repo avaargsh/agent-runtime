@@ -150,8 +150,8 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 9 {
-		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 9", version)
+	if version != 10 {
+		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 10", version)
 	}
 	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
 		t.Fatal("previously applied v4 database still permits audit TRUNCATE")
