@@ -18,6 +18,7 @@ type ProbeResult struct {
 }
 
 type probeStore interface {
+	LookupIntent(context.Context, string, string, string) (run.IntentReceipt, error)
 	GetRunIdentity(context.Context, string) (run.Identity, error)
 	GetRunPrincipalSnapshot(context.Context, string, string) (run.PrincipalSnapshot, error)
 	GetOrCreateTemporalTurn(context.Context, string, string, string, string, int32) (run.TemporalTurnIdentity, error)
@@ -57,6 +58,12 @@ func (a *ProbeActivities) BindAdmissionProbe(ctx context.Context, input ProbeInp
 	info := activity.GetInfo(ctx)
 	if info.WorkflowExecution.ID != input.WorkflowID || info.WorkflowExecution.RunID == "" ||
 		info.WorkflowType.Name != DevelopmentWorkflow {
+		return ProbeResult{}, ErrExecutionConflict
+	}
+	receipt, err := a.Store.LookupIntent(ctx, input.TenantID, input.RunIntentID, input.RequestDigest)
+	if err != nil || receipt.TenantID != input.TenantID || receipt.RunIntentID != input.RunIntentID ||
+		receipt.RequestDigest != input.RequestDigest || receipt.RunID != input.RunID ||
+		receipt.WorkflowID != input.WorkflowID {
 		return ProbeResult{}, ErrExecutionConflict
 	}
 	identity, err := a.Store.GetRunIdentity(ctx, input.RunID)
