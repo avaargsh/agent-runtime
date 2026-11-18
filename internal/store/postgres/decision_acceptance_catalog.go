@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // This attestation runs after the v12 migration (including on already-applied
@@ -87,6 +88,12 @@ func verifyDecisionAcceptanceStructure(ctx context.Context, db harnessCatalogRea
 		"receipt->'authority'->>'breaker_version'ISNOTDISTINCTFROMbreaker_version",
 	}
 	for _, expected := range expectedChecks {
+		// PostgreSQL may deparse IS NOT DISTINCT FROM as NOT (... IS DISTINCT FROM ...).
+		// Accept only those two exact semantic forms, not a substring or CHECK(TRUE).
+		deparsedExpected := expected
+		if strings.Contains(expected, "ISNOTDISTINCTFROM") {
+			deparsedExpected = "NOT" + strings.Replace(expected, "ISNOTDISTINCTFROM", "ISDISTINCTFROM", 1)
+		}
 		var matches int
 		err := db.QueryRow(ctx, `SELECT count(*)
             FROM pg_catalog.pg_constraint c
@@ -95,17 +102,12 @@ func verifyDecisionAcceptanceStructure(ctx context.Context, db harnessCatalogRea
               AND NOT c.condeferrable AND NOT c.condeferred AND c.conislocal
               AND pg_catalog.regexp_replace(
                  pg_catalog.replace(pg_catalog.pg_get_expr(c.conbin,c.conrelid),'::text',''),
-                 '[[:space:]()]','','g')=$2`, relation, expected).Scan(&matches)
+                 '[[:space:]()]','','g') IN ($2::text,$3::text)`, relation, expected, deparsedExpected).Scan(&matches)
 		if err != nil {
 			return fmt.Errorf("verify decision acceptance CHECK: %w", err)
 		}
 		if matches != 1 {
-			var observed string
-			_ = db.QueryRow(ctx, `SELECT COALESCE(string_agg(pg_catalog.pg_get_expr(c.conbin,c.conrelid), ' | ' ORDER BY c.conname),'')
-                FROM pg_catalog.pg_constraint c
-                WHERE c.conrelid=pg_catalog.to_regclass(pg_catalog.format('%I.%I',current_schema(),$1::text))
-                  AND c.contype='c'`, relation).Scan(&observed)
-			return fmt.Errorf("decision acceptance CHECK drift: %s (matches=%d; actual=%s)", expected, matches, observed)
+			return fmt.Errorf("decision acceptance CHECK drift: %s (matches=%d)", expected, matches)
 		}
 	}
 	keys := []struct{ name, kind, local, target, remote string }{
