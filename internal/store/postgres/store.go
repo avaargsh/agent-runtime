@@ -299,6 +299,28 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := verifyDecisionCheckpointCatalog(ctx, tx); err != nil {
 		return err
 	}
+	// v12 records local Decision acceptance without changing immutable v11.
+	var v12Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 12)",
+	).Scan(&v12Applied); err != nil {
+		return fmt.Errorf("read decision acceptance migration ledger: %w", err)
+	}
+	if !v12Applied {
+		script, err := migrationFiles.ReadFile("migrations/0012_runtime_decision_acceptance.up.sql")
+		if err != nil {
+			return fmt.Errorf("read decision acceptance migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply decision acceptance migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO runtime_schema_migrations (version) VALUES (12)"); err != nil {
+			return fmt.Errorf("record decision acceptance migration: %w", err)
+		}
+	}
+	if err := verifyDecisionAcceptanceCatalog(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}

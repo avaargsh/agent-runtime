@@ -32,10 +32,17 @@ func (s *Store) GetDecisionAuthority(ctx context.Context, tenant, runID, invocat
 	if err != nil {
 		return empty, err
 	}
+	return readDecisionAuthority(ctx, s.pool, rel, tenant, runID, invocationID, false)
+}
+
+// The acceptance transaction locks the exact active Run and breaker rows;
+// both cancellation and breaker transitions must wait for the local CAS.
+func readDecisionAuthority(ctx context.Context, q checkpointQueryer, rel checkpointRelations, tenant, runID, invocationID string, lock bool) (run.DecisionAuthority, error) {
+	var empty run.DecisionAuthority
 	var a run.DecisionAuthority
 	var principal run.PrincipalSnapshot
 	var input []byte
-	err = s.pool.QueryRow(ctx, fmt.Sprintf(`
+	query := fmt.Sprintf(`
 		SELECT r.tenant_id, r.run_id::text, r.run_intent_id::text, r.source_request_digest,
 		       r.workflow_id, c.execution_id::text, c.attempt_id::text, c.turn_id::text,
 		       t.invocation_id::text, r.agent_id, r.agent_release_id, r.session_id,
@@ -58,8 +65,11 @@ func (s *Store) GetDecisionAuthority(ctx context.Context, tenant, runID, invocat
 		WHERE r.tenant_id=$1 AND r.run_id=$2::uuid AND t.invocation_id=$3::uuid
 		  AND r.status='RUNNING' AND b.state='CLOSED'
 		  AND c.phase='WAITING_AUTHORITY' AND p.actor_id=p.subject_id
-	`, rel.runs, rel.principals, rel.checkpoints, rel.attempts, rel.turns, rel.breakers),
-		tenant, runID, invocationID).Scan(
+	`, rel.runs, rel.principals, rel.checkpoints, rel.attempts, rel.turns, rel.breakers)
+	if lock {
+		query += " FOR UPDATE OF r FOR SHARE OF b"
+	}
+	err := q.QueryRow(ctx, query, tenant, runID, invocationID).Scan(
 		&a.TenantID, &a.RunID, &a.RunIntentID, &a.RequestDigest, &a.WorkflowID,
 		&a.ExecutionID, &a.AttemptID, &a.TurnID, &a.InvocationID, &a.AgentID, &a.AgentReleaseID, &a.SessionID,
 		&a.ProjectID, &a.SubjectID, &a.ActorID, &a.PolicyRevision, &a.ConfigDigest,
