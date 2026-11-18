@@ -11,6 +11,7 @@ import (
 
 type DecisionCheckpointStore interface {
 	PrepareAcceptedDecision(context.Context, run.AcceptedDecisionRef, string) (run.DecisionCheckpoint, error)
+	CancelPreparedDecision(context.Context, run.AcceptedDecisionRef, string) error
 }
 
 type DecisionPreparation struct {
@@ -42,4 +43,26 @@ func (a *DecisionPreparation) PrepareAcceptedDecision(ctx context.Context, ref r
 		return deny()
 	}
 	return checkpoint, nil
+}
+
+func (a *DecisionPreparation) CancelPreparedDecision(ctx context.Context, ref run.AcceptedDecisionRef) error {
+	deny := func() error {
+		return temporal.NewNonRetryableApplicationError(
+			"business cancellation binding denied", "DECISION_CANCELLATION_DENIED", nil)
+	}
+	if a == nil || a.Store == nil || ref.Validate() != nil || !activity.IsActivity(ctx) {
+		return deny()
+	}
+	info := activity.GetInfo(ctx)
+	if info.WorkflowExecution.ID != ref.WorkflowID || info.WorkflowExecution.RunID == "" ||
+		info.WorkflowType.Name != "AcceptedDecisionV1" || info.TaskQueue != "runtime-accepted-decision-development-v1" {
+		return deny()
+	}
+	if err := a.Store.CancelPreparedDecision(ctx, ref, info.WorkflowExecution.RunID); err != nil {
+		if errors.Is(err, run.ErrRepositoryUnavailable) {
+			return run.ErrRepositoryUnavailable
+		}
+		return deny()
+	}
+	return nil
 }
