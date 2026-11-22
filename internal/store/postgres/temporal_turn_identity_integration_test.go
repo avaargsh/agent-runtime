@@ -239,6 +239,26 @@ func TestTemporalTurnTwoTenantsRevocationFencesRecoveredIdentity(t *testing.T) {
 	if _, err := restarted.GetOrCreateTemporalTurn(ctx, b.TenantID, b.RunID, b.WorkflowID, secondTemporalExecutionID, 1); !errors.Is(err, postgres.ErrTemporalTurnUntrustedRun) {
 		t.Fatalf("OPEN breaker allowed a restarted Worker to replay its Turn: %v", err)
 	}
+	// A legitimate breaker recovery is not automatically an authority to
+	// reuse the pre-revocation Attempt/Turn: no epoch-bound continuation
+	// credential has been issued by this Store API.
+	half, err := opened.BeginRecovery("approval-tenant-b", opened.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, opened.Version, half); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := half.CompleteRecovery("approval-tenant-b", "evidence://tenant-b-recovery", half.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, half.Version, recovered); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.GetOrCreateTemporalTurn(ctx, b.TenantID, b.RunID, b.WorkflowID, secondTemporalExecutionID, 1); !errors.Is(err, postgres.ErrTemporalTurnUntrustedRun) {
+		t.Fatalf("recovered CLOSED breaker silently reauthorized stale Turn epoch: %v", err)
+	}
 
 	var attempts, turns int
 	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM runtime_run_attempts), (SELECT count(*) FROM runtime_decision_turns)").Scan(&attempts, &turns); err != nil {
