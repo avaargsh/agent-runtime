@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
@@ -171,5 +172,79 @@ func TestTemporalAttemptTurnIdentityCannotBeRewrittenOrTruncated(t *testing.T) {
 		if _, err := pool.Exec(ctx, query); err == nil {
 			t.Fatalf("immutable Execution ID changed or removed: %s", query)
 		}
+	}
+}
+
+
+// Two actually persisted tenants share one Runtime database. A stale Worker
+// must not obtain the old Turn identity after cancellation or a breaker trip,
+// even if the same Temporal execution ID is replayed after process restart.
+// This Store gate is not proof of Temporal namespace or Sandbox filesystem IAM.
+func TestTemporalTurnTwoTenantsRevocationFencesRecoveredIdentity(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+
+	tenantA := testIntent()
+	tenantB := testIntent()
+	tenantB.TenantID = "tenant-2"
+	tenantB.RunIntentID = "22222222-2222-4222-8222-222222222222"
+
+	a, err := store.AcceptIntentWithPrincipal(ctx, tenantA, trustedSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := store.AcceptIntentWithPrincipal(ctx, tenantB, trustedSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	aTurn, err := store.GetOrCreateTemporalTurn(ctx, a.TenantID, a.RunID, a.WorkflowID, firstTemporalExecutionID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bTurn, err := store.GetOrCreateTemporalTurn(ctx, b.TenantID, b.RunID, b.WorkflowID, secondTemporalExecutionID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aTurn.RunAttemptID == bTurn.RunAttemptID || aTurn.TurnID == bTurn.TurnID {
+		t.Fatal("two tenants reused a Runtime execution identity")
+	}
+
+	restarted := postgres.New(pool)
+	if _, err := restarted.GetOrCreateTemporalTurn(ctx, a.TenantID, b.RunID, b.WorkflowID, secondTemporalExecutionID, 1); !errors.Is(err, postgres.ErrTemporalTurnUntrustedRun) {
+		t.Fatalf("tenant A acquired tenant B's existing Turn: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		"UPDATE runs SET status='CANCELLED', updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2::uuid",
+		a.TenantID, a.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.GetOrCreateTemporalTurn(ctx, a.TenantID, a.RunID, a.WorkflowID, firstTemporalExecutionID, 1); !errors.Is(err, postgres.ErrTemporalTurnUntrustedRun) {
+		t.Fatalf("cancelled tenant A Run recovered an existing Turn identity: %v", err)
+	}
+	if got, err := restarted.GetOrCreateTemporalTurn(ctx, b.TenantID, b.RunID, b.WorkflowID, secondTemporalExecutionID, 1); err != nil || got != bTurn {
+		t.Fatalf("tenant B was affected by tenant A cancellation: %+v %v", got, err)
+	}
+
+	current, err := store.GetRunBreaker(ctx, b.TenantID, b.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := current.Trip("UNAUTHORIZED_EGRESS", "test-revoked-tenant-b", current.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, current.Version, opened); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.GetOrCreateTemporalTurn(ctx, b.TenantID, b.RunID, b.WorkflowID, secondTemporalExecutionID, 1); !errors.Is(err, postgres.ErrTemporalTurnUntrustedRun) {
+		t.Fatalf("OPEN breaker allowed a restarted Worker to replay its Turn: %v", err)
+	}
+
+	var attempts, turns int
+	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM runtime_run_attempts), (SELECT count(*) FROM runtime_decision_turns)").Scan(&attempts, &turns); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || turns != 2 {
+		t.Fatalf("denied cross-tenant/revoked replays mutated durable state: attempts=%d turns=%d", attempts, turns)
 	}
 }
