@@ -547,3 +547,110 @@ func TestHarnessConfirmedBindingStoreLookupAfterRestart(t *testing.T) {
 		t.Fatalf("cancelled Run lost confirmed binding for best-effort cancel: %+v err=%v", afterCancel, err)
 	}
 }
+
+// Run breaker transitions must fence Harness session/new separately from
+// Temporal Turn creation. This exercises real PostgreSQL ownership, not a
+// Sandbox process or AgentD filesystem capability.
+func TestHarnessCreationAndDispatchDenyRevokedRunEpoch(t *testing.T) {
+	t.Run("OPEN before initial creation", func(t *testing.T) {
+		pool, store, claim := harnessFixture(t)
+		ctx := context.Background()
+		initial, err := store.GetRunBreaker(ctx, claim.TenantID, claim.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opened, err := initial.Trip("UNAUTHORIZED_EGRESS", "harness-claim-revoked", initial.UpdatedAt.Add(time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CompareAndSwapBreaker(ctx, initial.Version, opened); err != nil {
+			t.Fatal(err)
+		}
+		record, err := store.ClaimHarnessSession(ctx, claim)
+		if !errors.Is(err, acp.ErrBindingInvalid) || record.Created {
+			t.Fatalf("OPEN breaker minted Harness claim: %+v %v", record, err)
+		}
+		var n int
+		if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_harness_session_claims WHERE tenant_id=$1 AND run_id=$2::uuid",
+			claim.TenantID, claim.RunID).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("revoked Run persisted Harness claim: count=%d err=%v", n, err)
+		}
+	})
+	t.Run("OPEN and recovered epoch before dispatch", func(t *testing.T) {
+		pool, store, claim := harnessFixture(t)
+		ctx := context.Background()
+		if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+			t.Fatal(err)
+		}
+		initial, err := store.GetRunBreaker(ctx, claim.TenantID, claim.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opened, err := initial.Trip("UNAUTHORIZED_EGRESS", "harness-dispatch-revoked", initial.UpdatedAt.Add(time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CompareAndSwapBreaker(ctx, initial.Version, opened); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); ok || !errors.Is(err, acp.ErrBindingInvalid) {
+			t.Fatalf("OPEN breaker authorized session/new: allowed=%t err=%v", ok, err)
+		}
+		half, err := opened.BeginRecovery("approval-harness", opened.UpdatedAt.Add(time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CompareAndSwapBreaker(ctx, opened.Version, half); err != nil {
+			t.Fatal(err)
+		}
+		recovered, err := half.CompleteRecovery("approval-harness", "evidence://harness-recovery", half.UpdatedAt.Add(time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CompareAndSwapBreaker(ctx, half.Version, recovered); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := postgres.New(pool).BeginHarnessSessionDispatch(ctx, claim); ok || !errors.Is(err, acp.ErrBindingInvalid) {
+			t.Fatalf("recovered breaker reauthorized stale session/new: allowed=%t err=%v", ok, err)
+		}
+		record, err := store.ReadHarnessSessionClaim(ctx, claim)
+		if err != nil || record.State != acp.ClaimPrepared {
+			t.Fatalf("rejected dispatch advanced prepared claim: %+v err=%v", record, err)
+		}
+	})
+}
+
+// A dispatch already committed to UNKNOWN must remain reconcilable after a
+// breaker trip. Replaying UNKNOWN must never allow a second external session.
+func TestHarnessUnknownRemainsReconcilableAfterBreakerRevocation(t *testing.T) {
+	_, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if allowed, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !allowed {
+		t.Fatalf("initial dispatch failed: allowed=%t err=%v", allowed, err)
+	}
+	initial, err := store.GetRunBreaker(ctx, claim.TenantID, claim.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := initial.Trip("UNAUTHORIZED_EGRESS", "harness-dispatched-revoked", initial.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, initial.Version, opened); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := store.ClaimHarnessSession(ctx, claim)
+	if err != nil || rec.State != acp.ClaimUnknown || rec.Created {
+		t.Fatalf("revocation lost UNKNOWN reconciliation evidence: %+v err=%v", rec, err)
+	}
+	if allowed, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || allowed {
+		t.Fatalf("UNKNOWN replay reauthorized a second session/new: allowed=%t err=%v", allowed, err)
+	}
+	confirmed, err := store.ConfirmHarnessSession(ctx, claim, "agent-session-reconciled")
+	if err != nil || confirmed.State != acp.ClaimConfirmed {
+		t.Fatalf("late external ACK could not reconcile UNKNOWN: %+v err=%v", confirmed, err)
+	}
+}
