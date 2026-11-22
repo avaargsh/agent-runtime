@@ -654,3 +654,74 @@ func TestHarnessUnknownRemainsReconcilableAfterBreakerRevocation(t *testing.T) {
 		t.Fatalf("late external ACK could not reconcile UNKNOWN: %+v err=%v", confirmed, err)
 	}
 }
+
+// An in-flight breaker transition must serialize with BOTH creation and
+// session/new dispatch. Otherwise the SQL predicate could read pre-revocation
+// state and permit a new external effect before the transition commits.
+func TestHarnessCreationAndDispatchCannotRaceUncommittedBreakerTrip(t *testing.T) {
+	for _, stage := range []string{"claim", "dispatch"} {
+		t.Run(stage, func(t *testing.T) {
+			pool, store, claim := harnessFixture(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if stage == "dispatch" {
+				if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			tag, err := tx.Exec(ctx, `
+				UPDATE runtime_circuit_breakers SET
+					state='OPEN',epoch=epoch+1,version=version+1,
+					reason_code='UNAUTHORIZED_EGRESS',
+					trigger_event_id='harness-breaker-race',
+					opened_at=clock_timestamp(),updated_at=clock_timestamp()
+				WHERE scope_kind='RUN' AND scope_id=$1 AND state='CLOSED'
+			`, claim.RunID)
+			if err != nil || tag.RowsAffected() != 1 {
+				t.Fatalf("begin uncommitted breaker transition: affected=%d err=%v", tag.RowsAffected(), err)
+			}
+			type result struct {
+				created bool
+				allowed bool
+				err     error
+			}
+			out := make(chan result, 1)
+			go func() {
+				if stage == "claim" {
+					rec, err := store.ClaimHarnessSession(ctx, claim)
+					out <- result{created: rec.Created, err: err}
+					return
+				}
+				allowed, err := store.BeginHarnessSessionDispatch(ctx, claim)
+				out <- result{allowed: allowed, err: err}
+			}()
+			select {
+			case early := <-out:
+				t.Fatalf("Harness %s bypassed an uncommitted RUN breaker transition: %+v", stage, early)
+			case <-time.After(150 * time.Millisecond):
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var got result
+			select {
+			case got = <-out:
+			case <-ctx.Done():
+				t.Fatal("Harness operation remained blocked after breaker commit")
+			}
+			if got.created || got.allowed || !errors.Is(got.err, acp.ErrBindingInvalid) {
+				t.Fatalf("breaker did not fence Harness %s: %+v", stage, got)
+			}
+			var n int
+			if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_harness_session_claims WHERE tenant_id=$1 AND run_id=$2::uuid AND state='UNKNOWN'",
+				claim.TenantID, claim.RunID).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("revoked session committed UNKNOWN effect authority: count=%d err=%v", n, err)
+			}
+		})
+	}
+}
