@@ -175,7 +175,6 @@ func TestTemporalAttemptTurnIdentityCannotBeRewrittenOrTruncated(t *testing.T) {
 	}
 }
 
-
 // Two actually persisted tenants share one Runtime database. A stale Worker
 // must not obtain the old Turn identity after cancellation or a breaker trip,
 // even if the same Temporal execution ID is replayed after process restart.
