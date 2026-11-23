@@ -48,6 +48,7 @@ func AcceptedDecision(ctx workflow.Context, ref run.AcceptedDecisionRef) (run.De
 		return run.DecisionCheckpoint{}, temporal.NewNonRetryableApplicationError(
 			"invalid committed decision checkpoint", "DECISION_PREPARATION_DENIED", nil)
 	}
+	// This durable checkpoint is not a Decision continuation receipt or Guard Permit.
 	// Do not complete the canonical Workflow ID with a nonterminal stage.
 	// A future versioned, independently authorized continuation must resume
 	// here; until then only cancellation or the execution deadline ends it.
