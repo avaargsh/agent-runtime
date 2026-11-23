@@ -65,26 +65,37 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 	if err != nil {
 		return empty, err
 	}
-	// Serialize all execution identity writes for one canonical Run. A
-	// different Temporal execution cannot win concurrently after a lost ACK.
-	var persistedStatus string
+	// Serialize identity writes against the canonical Run and the RUN
+	// breaker transition. Replaying an existing Attempt/Turn is not an
+	// authorization shortcut after cancellation or revocation. A breaker
+	// that has ever changed epoch cannot silently reauthorize a stale Turn:
+	// the explicit epoch-bound continuation contract is not implemented.
+	var persistedStatus, breakerState string
+	var breakerEpoch, breakerVersion int64
 	err = tx.QueryRow(ctx, fmt.Sprintf(`
-		SELECT r.status
+		SELECT r.status, b.state, b.epoch, b.version
 		FROM %s AS r
 		JOIN %s AS p
 		  ON p.run_id = r.run_id AND p.tenant_id = r.tenant_id
+		JOIN %s AS b
+		  ON b.scope_kind='RUN' AND b.scope_id=r.run_id::text
 		WHERE r.tenant_id = $1 AND r.run_id = $2::uuid
 		  AND r.workflow_id = $3
 		  AND r.run_intent_id IS NOT NULL
 		  AND r.source_request_digest IS NOT NULL
 		  AND p.snapshot_version = 'acp-principal/v1'
-		FOR UPDATE OF r
-	`, rel.runs, rel.principals), tenantID, runID, workflowID).Scan(&persistedStatus)
+		FOR UPDATE OF r FOR SHARE OF b
+	`, rel.runs, rel.principals, rel.breakers), tenantID, runID, workflowID).
+		Scan(&persistedStatus, &breakerState, &breakerEpoch, &breakerVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return empty, ErrTemporalTurnUntrustedRun
 	}
 	if err != nil {
-		return empty, fmt.Errorf("load canonical Runtime Run/ACP principal: %w", err)
+		return empty, fmt.Errorf("load canonical Runtime Run/ACP principal and breaker: %w", err)
+	}
+	if (persistedStatus != string(run.StatusQueued) && persistedStatus != string(run.StatusRunning)) ||
+		breakerState != "CLOSED" || breakerEpoch != 1 || breakerVersion < 1 {
+		return empty, ErrTemporalTurnUntrustedRun
 	}
 
 	var attemptID, existingExecution string

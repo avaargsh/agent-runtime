@@ -17,6 +17,8 @@ import (
 // It MUST be called only with verified Runtime/ACP identity and policy context.
 // A matching persisted ACP principal/policy snapshot is also required.
 // Its presence never authorizes any Agent tool, terminal or EngageGuard effect.
+// Initial creation requires a locked CLOSED Run breaker at the initial epoch;
+// later epochs need an explicit continuation contract, not silent reuse.
 func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim) (acp.SessionClaimRecord, error) {
 	if s == nil || s.pool == nil {
 		return acp.SessionClaimRecord{}, run.ErrRepositoryUnavailable
@@ -25,6 +27,10 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 		return acp.SessionClaimRecord{}, err
 	}
 	claimTable, runTable, principalTable, attemptTable, err := s.harnessRelations()
+	if err != nil {
+		return acp.SessionClaimRecord{}, err
+	}
+	relations, err := s.checkpointRelations()
 	if err != nil {
 		return acp.SessionClaimRecord{}, err
 	}
@@ -39,19 +45,21 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 		JOIN %s AS a ON a.tenant_id=r.tenant_id
 			AND a.run_id=r.run_id AND a.run_attempt_id=$3::uuid
 			AND a.workflow_id=r.workflow_id
+		JOIN %s AS b ON b.scope_kind='RUN' AND b.scope_id=r.run_id::text
 		WHERE r.tenant_id = $1 AND r.run_id = $2::uuid
 			AND r.agent_release_id = $5 AND r.source_request_digest = $7
 			AND r.status = 'RUNNING'
+			AND b.state='CLOSED' AND b.epoch=1 AND b.version>=1
 			AND EXISTS (
 				SELECT 1 FROM %s AS p
 				WHERE p.tenant_id=r.tenant_id AND p.run_id=r.run_id
 					AND p.snapshot_version='acp-principal/v1'
 					AND p.policy_revision=$6
 			)
-		FOR SHARE OF r,a
+		FOR SHARE OF r,a,b
 		ON CONFLICT (tenant_id, run_id) DO NOTHING
 		RETURNING run_id::text
-	`, claimTable, runTable, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, attemptTable, relations.breakers, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&insertedRunID)
 	if err == nil {
 		return acp.SessionClaimRecord{SessionClaim: claim, State: acp.ClaimPrepared, Created: true}, nil
@@ -115,7 +123,8 @@ func (s *Store) ReadHarnessSessionClaim(ctx context.Context, claim acp.SessionCl
 // session/new attempt. Persist UNKNOWN BEFORE any external call. If the
 // transaction ACK is lost, a later read is UNKNOWN and grants no new dispatch.
 // Only a matching persisted ACP principal/policy and the caller receiving
-// (true, nil) may call session/new once.
+// (true, nil) may call session/new once. This second check locks the same
+// RUN breaker so a revocation committed before dispatch cannot be bypassed.
 func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.SessionClaim) (bool, error) {
 	if s == nil || s.pool == nil {
 		return false, run.ErrRepositoryUnavailable
@@ -124,6 +133,10 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 		return false, err
 	}
 	claimTable, runTable, principalTable, attemptTable, err := s.harnessRelations()
+	if err != nil {
+		return false, err
+	}
+	relations, err := s.checkpointRelations()
 	if err != nil {
 		return false, err
 	}
@@ -139,18 +152,20 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 				JOIN %s a ON a.tenant_id=r.tenant_id
 					AND a.run_id=r.run_id AND a.run_attempt_id=c.attempt_id
 					AND a.workflow_id=r.workflow_id
+				JOIN %s b ON b.scope_kind='RUN' AND b.scope_id=r.run_id::text
 				WHERE r.tenant_id=c.tenant_id
 				AND r.run_id=c.run_id AND r.agent_release_id=c.agent_release_id
 				AND r.source_request_digest=c.request_digest AND r.status='RUNNING'
+				AND b.state='CLOSED' AND b.epoch=1 AND b.version>=1
 				AND EXISTS (
 					SELECT 1 FROM %s AS p
 					WHERE p.tenant_id=r.tenant_id AND p.run_id=r.run_id
 						AND p.snapshot_version='acp-principal/v1'
 						AND p.policy_revision=c.policy_revision
 				)
-				FOR SHARE OF r,a)
+				FOR SHARE OF r,a,b)
 		RETURNING c.run_id::text
-	`, claimTable, runTable, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, attemptTable, relations.breakers, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&runID)
 	if err == nil {
 		return true, nil

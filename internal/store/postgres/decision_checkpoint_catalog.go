@@ -10,7 +10,10 @@ func verifyDecisionCheckpointCatalog(ctx context.Context, db harnessCatalogReade
 }
 
 func verifyDecisionAcceptanceCatalog(ctx context.Context, db harnessCatalogReader) error {
-	return verifyDecisionFactCatalog(ctx, db, "runtime_decision_acceptances", "runtime_decision_acceptance")
+	if err := verifyDecisionFactCatalog(ctx, db, "runtime_decision_acceptances", "runtime_decision_acceptance"); err != nil {
+		return err
+	}
+	return verifyDecisionAcceptanceStructure(ctx, db)
 }
 
 func verifyDecisionFactCatalog(ctx context.Context, db harnessCatalogReader, table, triggerPrefix string) error {
