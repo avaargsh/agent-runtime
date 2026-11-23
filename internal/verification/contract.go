@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const Version = "verification/v1"
@@ -85,7 +86,7 @@ type Assessment struct {
 }
 
 func nonBlank(s string) bool {
-	return s != "" && strings.TrimSpace(s) == s && strings.IndexFunc(s, unicode.IsControl) == -1
+	return s != "" && utf8.ValidString(s) && strings.TrimSpace(s) == s && strings.IndexFunc(s, unicode.IsControl) == -1
 }
 
 func boundedNonBlank(s string, maxBytes int) bool {
