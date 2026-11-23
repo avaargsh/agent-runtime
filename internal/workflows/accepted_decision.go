@@ -49,6 +49,7 @@ func AcceptedDecision(ctx workflow.Context, ref run.AcceptedDecisionRef) (run.De
 		return run.DecisionCheckpoint{}, temporal.NewNonRetryableApplicationError(
 			"invalid committed decision checkpoint", "DECISION_PREPARATION_DENIED", nil)
 	}
+	// This durable checkpoint is not a Decision continuation receipt or Guard Permit.
 	// Existing histories without the version marker retain their original
 	// waiting behavior. New development Runs may be woken by an operator
 	// hint; the payload is discarded and never passed to the Activity.
