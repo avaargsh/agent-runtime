@@ -2,18 +2,17 @@ package postgres_test
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/avaargsh/agent-runtime/internal/startdispatch"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/testsuite"
-	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 )
 
 // This driver consumes the one already accepted ACP Run in an explicitly
@@ -33,7 +32,8 @@ func TestExternalACPAdmissionTemporalRecovery(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, required("RUNTIME_EXTERNAL_DATABASE_URL"))
+	dsn := required("RUNTIME_EXTERNAL_DATABASE_URL")
+	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +52,18 @@ func TestExternalACPAdmissionTemporalRecovery(t *testing.T) {
 		t.Fatalf("accepted principal missing or mismatched: %v", err)
 	}
 	var rows, pending, attempts int
+	var raw []byte
+	if err := pool.QueryRow(ctx, "SELECT input FROM runs WHERE run_id=$1::uuid AND tenant_id=$2", runID, tenant).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var input run.SREDecisionInput
+	if err := json.Unmarshal(raw, &input); err != nil || input.Objective != "sre_incident_triage" {
+		t.Fatal("external Run must contain actual accepted SRE business input")
+	}
+	wantInputDigest, err := run.DigestSREDecisionInput(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := pool.QueryRow(ctx, `
 		SELECT (SELECT count(*) FROM runs),
 		       (SELECT count(*) FROM runtime_outbox WHERE event_type='RUN_START_REQUESTED' AND delivered_at IS NULL),
@@ -73,7 +85,7 @@ func TestExternalACPAdmissionTemporalRecovery(t *testing.T) {
 	// Start with no Worker. Temporal must commit the actual Workflow before
 	// a Worker sees it. The existing fault injector loses the accepted ACK.
 	lost := &lostStartACK{Client: c}
-	first, err := startdispatch.DispatchOnce(ctx, store, lost, "external-first", time.Minute, time.Millisecond)
+	first, err := startdispatch.DispatchAcceptedDecisionOnce(ctx, store, lost, "external-first", time.Minute, time.Millisecond)
 	if err == nil || first.Delivered || !first.Found || first.RunID != runID || lost.calls != 1 {
 		t.Fatalf("external Run did not enter uncertain start: %+v %v", first, err)
 	}
@@ -95,44 +107,42 @@ func TestExternalACPAdmissionTemporalRecovery(t *testing.T) {
 	}
 	c = server.Client()
 	lost.Client = c
-	w := worker.New(c, startdispatch.DevelopmentQueue, worker.Options{})
-	w.RegisterWorkflowWithOptions(startdispatch.AdmissionProbe, workflow.RegisterOptions{Name: startdispatch.DevelopmentWorkflow})
-	w.RegisterActivity(&startdispatch.ProbeActivities{Store: postgres.New(pool)})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer w.Stop()
-	second, err := startdispatch.DispatchOnce(ctx, postgres.New(pool), lost, "external-restarted", time.Minute, time.Millisecond)
+	second, err := startdispatch.DispatchAcceptedDecisionOnce(ctx, postgres.New(pool), lost, "external-restarted", time.Minute, time.Millisecond)
 	if err != nil || !second.Delivered || second.RunID != runID ||
 		second.ExecutionID != executionID || lost.calls != 1 {
 		t.Fatalf("external recovery created or accepted a second execution: %+v %v", second, err)
 	}
-	var result startdispatch.ProbeResult
-	if err := c.GetWorkflow(ctx, receipt.WorkflowID, executionID).Get(ctx, &result); err != nil {
-		t.Fatal(err)
+	ref := run.AcceptedDecisionRef{TenantID: tenant, RunID: runID, WorkflowID: receipt.WorkflowID,
+		RunIntentID: intentID, RequestDigest: digest}
+	schema := pool.Config().ConnConfig.RuntimeParams["search_path"]
+	if schema == "" {
+		schema = "public"
 	}
-	if result.RunID != runID || result.ExecutionID != executionID || result.AttemptID == "" || result.TurnID == "" {
-		t.Fatalf("Temporal result identity differs from accepted ACP Run: %+v", result)
+	// Same actual Run, same canonical Temporal execution. The helper
+	// never starts a second Workflow and never seeds a Run or principal.
+	checkpoint := recoverAcceptedDecisionWorker(t, ctx, pool, c, server.FrontendHostPort(), ref,
+		executionID, dsn, schema, input.Service)
+	if checkpoint.InputDigest != wantInputDigest || checkpoint.PolicyRevision != principal.PolicyRevision ||
+		checkpoint.ConfigDigest != principal.ConfigDigest {
+		t.Fatal("business checkpoint did not bind accepted external input and principal")
 	}
-	again, err := startdispatch.DispatchOnce(ctx, store, c, "external-terminal", time.Minute, time.Second)
+	again, err := startdispatch.DispatchAcceptedDecisionOnce(ctx, store, c, "external-terminal", time.Minute, time.Second)
 	if err != nil || again.Found {
 		t.Fatalf("delivered start was re-claimed: %+v %v", again, err)
 	}
-	bound, err := store.GetOrCreateTemporalTurn(ctx, tenant, runID, receipt.WorkflowID, executionID, 1)
-	if err != nil || bound.RunAttemptID != result.AttemptID || bound.TurnID != result.TurnID {
-		t.Fatalf("persistent attempt/turn mismatch: %+v %v", bound, err)
-	}
-	if _, err := store.GetOrCreateTemporalTurn(ctx, tenant, runID, receipt.WorkflowID, secondTemporalExecutionID, 1); !errors.Is(err, postgres.ErrTemporalExecutionConflict) {
-		t.Fatalf("different execution could claim this Run: %v", err)
-	}
-	var runs, starts, delivered, turns int
+	var runs, starts, delivered, turns, checkpoints int
+	var status string
 	if err := pool.QueryRow(ctx, `
 		SELECT (SELECT count(*) FROM runs),
 		       (SELECT count(*) FROM runtime_outbox WHERE event_type='RUN_START_REQUESTED'),
 		       (SELECT count(delivered_at) FROM runtime_outbox WHERE event_type='RUN_START_REQUESTED'),
-		       (SELECT count(*) FROM runtime_decision_turns)
-	`).Scan(&runs, &starts, &delivered, &turns); err != nil || runs != 1 || starts != 1 || delivered != 1 || turns != 1 {
-		t.Fatalf("external chain duplicated durable work: %d/%d/%d/%d %v", runs, starts, delivered, turns, err)
+		       (SELECT count(*) FROM runtime_decision_turns),
+		       (SELECT count(*) FROM runtime_decision_checkpoints),
+		       (SELECT status FROM runs WHERE run_id=$1::uuid)
+	`, runID).Scan(&runs, &starts, &delivered, &turns, &checkpoints, &status); err != nil ||
+		runs != 1 || starts != 1 || delivered != 1 || turns != 1 || checkpoints != 1 || status != "CANCELLED" {
+		t.Fatalf("external chain duplicated durable work or lost cancellation: %d/%d/%d/%d/%d/%s %v", runs, starts, delivered, turns, checkpoints, status, err)
 	}
-	t.Logf("external ACP Run %s, Workflow %s, Temporal execution %s, Attempt %s, Turn %s", runID, receipt.WorkflowID, executionID, result.AttemptID, result.TurnID)
+	t.Logf("external ACP business Run %s, Workflow %s, Temporal execution %s, Attempt %s, Turn %s, recovered WAITING_AUTHORITY then CANCELLED",
+		runID, receipt.WorkflowID, executionID, checkpoint.AttemptID, checkpoint.TurnID)
 }

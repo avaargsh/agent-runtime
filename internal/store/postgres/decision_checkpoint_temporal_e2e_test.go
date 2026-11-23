@@ -119,6 +119,18 @@ func TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	recoverAcceptedDecisionWorker(t, ctx, pool, c, server.FrontendHostPort(), ref, execution.GetRunID(),
+		os.Getenv("TEST_DATABASE_URL"), pool.Config().ConnConfig.RuntimeParams["search_path"], canary)
+}
+
+// Reuse this actual process-kill gate for both local accepted fixture and
+// the externally accepted OAuth ACP Run. It never creates another Run or
+// starts another Workflow.
+func recoverAcceptedDecisionWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool, c client.Client,
+	frontend string, ref run.AcceptedDecisionRef, executionID, dsn, schema, canary string,
+) run.DecisionCheckpoint {
+	t.Helper()
+	path := t.TempDir()
 	bin, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -127,9 +139,9 @@ func TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL(t *testing.T) {
 	child := exec.CommandContext(ctx, bin, "-test.run=^TestAcceptedDecisionCheckpointWorkerProcess$", "-test.v")
 	child.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"),
-		"TEST_DATABASE_URL=" + os.Getenv("TEST_DATABASE_URL"),
-		"RUNTIME_CHECKPOINT_WORKER=1", "RUNTIME_CHECKPOINT_SCHEMA=" + pool.Config().ConnConfig.RuntimeParams["search_path"],
-		"RUNTIME_CHECKPOINT_TEMPORAL=" + server.FrontendHostPort(), "RUNTIME_CHECKPOINT_MARKER=" + marker,
+		"TEST_DATABASE_URL=" + dsn,
+		"RUNTIME_CHECKPOINT_WORKER=1", "RUNTIME_CHECKPOINT_SCHEMA=" + schema,
+		"RUNTIME_CHECKPOINT_TEMPORAL=" + frontend, "RUNTIME_CHECKPOINT_MARKER=" + marker,
 	}
 	logFile, err := os.Create(filepath.Join(path, "worker.log"))
 	if err != nil {
@@ -185,18 +197,18 @@ func TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL(t *testing.T) {
 	var result run.DecisionCheckpoint
 	queryDeadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(queryDeadline) {
-		value, err := c.QueryWorkflow(ctx, ref.WorkflowID, execution.GetRunID(), workflows.AcceptedDecisionCheckpointQuery)
+		value, err := c.QueryWorkflow(ctx, ref.WorkflowID, executionID, workflows.AcceptedDecisionCheckpointQuery)
 		if err == nil && value.Get(&result) == nil && result.Phase == run.DecisionWaitingAuthority {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	desc, err := c.DescribeWorkflowExecution(ctx, ref.WorkflowID, execution.GetRunID())
+	desc, err := c.DescribeWorkflowExecution(ctx, ref.WorkflowID, executionID)
 	if err != nil || desc.GetWorkflowExecutionInfo().GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
 		t.Fatalf("business Workflow did not remain paused at authority gate: %v", err)
 	}
 	if result.AcceptedDecisionRef != ref || result.AttemptID != committedAttempt || result.TurnID != committedTurn ||
-		result.InputDigest != committedDigest || result.ExecutionID != execution.GetRunID() ||
+		result.InputDigest != committedDigest || result.ExecutionID != executionID ||
 		result.Phase != run.DecisionWaitingAuthority {
 		t.Fatalf("crash recovery changed committed business checkpoint: %+v", result)
 	}
@@ -208,10 +220,10 @@ func TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL(t *testing.T) {
 		       (SELECT count(*) FROM runtime_run_attempts),
 		       (SELECT status FROM runs WHERE run_id=$1::uuid)
 	`, ref.RunID).Scan(&checkpoints, &turns, &attempts, &status); err != nil ||
-		checkpoints != 1 || turns != 1 || attempts != 1 || status != "QUEUED" {
+		checkpoints != 1 || turns != 1 || attempts != 1 || status != "RUNNING" {
 		t.Fatalf("recovery duplicated state or forged business success: %d/%d/%d/%s %v", checkpoints, turns, attempts, status, err)
 	}
-	history := c.GetWorkflowHistory(ctx, ref.WorkflowID, execution.GetRunID(), false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	history := c.GetWorkflowHistory(ctx, ref.WorkflowID, executionID, false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for history.HasNext() {
 		event, err := history.Next()
 		if err != nil {
@@ -222,12 +234,48 @@ func TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL(t *testing.T) {
 			t.Fatal("raw business input escaped into Temporal history")
 		}
 	}
-	if err := c.CancelWorkflow(ctx, ref.WorkflowID, execution.GetRunID()); err != nil {
+	// In the source-pinned external ACP gate, run the independently built
+	// Decision acceptance driver while this exact recovered business Turn
+	// is still RUNNING. The driver uses real network authority, not local
+	// fixture claims, and may not update Runtime lifecycle or execute effects.
+	if os.Getenv("RUNTIME_EXTERNAL_LIVE_DECISION") == "1" {
+		binary := os.Getenv("DECISION_EXTERNAL_LIVE_CORE_BIN")
+		if binary == "" {
+			t.Fatal("missing independent Decision Core acceptance binary")
+		}
+		verify := exec.CommandContext(ctx, binary, "-test.v", "-test.run=^TestExternalLiveDecisionCore$", "-test.timeout=100s")
+		verify.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"),
+			"DECISION_EXTERNAL_LIVE_CORE=1",
+			"DECISION_LIVE_TENANT=" + ref.TenantID, "DECISION_LIVE_RUN=" + ref.RunID,
+			"DECISION_LIVE_INVOCATION=" + result.TurnID,
+		}
+		for _, name := range []string{"DECISION_LIVE_AGENT", "DECISION_LIVE_ROOTS",
+			"DECISION_LIVE_CLIENT_CA", "DECISION_LIVE_CLIENT_CERT", "DECISION_LIVE_CLIENT_KEY",
+			"DECISION_LIVE_ACP_PUBLIC_KEY", "DECISION_LIVE_RUNTIME_ORIGIN",
+			"DECISION_LIVE_ACP_ORIGIN", "DECISION_LIVE_DATABASE_URL"} {
+			value := os.Getenv(name)
+			if value == "" {
+				t.Fatalf("missing independent Decision driver configuration %s", name)
+			}
+			verify.Env = append(verify.Env, name+"="+value)
+		}
+		output, err := verify.CombinedOutput()
+		if err != nil || !bytes.Contains(output, []byte("--- PASS: TestExternalLiveDecisionCore ")) {
+			t.Fatalf("actual same-Run Decision Core gate failed: %v %s", err, output)
+		}
+		t.Logf("same-Run independent Decision Core evidence:\n%s", output)
+	}
+	if err := c.CancelWorkflow(ctx, ref.WorkflowID, executionID); err != nil {
 		t.Fatal(err)
 	}
 	var canceled *temporal.CanceledError
-	if err := c.GetWorkflow(ctx, ref.WorkflowID, execution.GetRunID()).Get(ctx, nil); !errors.As(err, &canceled) {
+	if err := c.GetWorkflow(ctx, ref.WorkflowID, executionID).Get(ctx, nil); !errors.As(err, &canceled) {
 		t.Fatalf("paused workflow was not canceled without business success: %v", err)
 	}
+	if err := pool.QueryRow(ctx, "SELECT status FROM runs WHERE run_id=$1::uuid", ref.RunID).Scan(&status); err != nil || status != "CANCELLED" {
+		t.Fatalf("pre-effect Workflow cancellation did not reconcile Runtime lifecycle: %s %v", status, err)
+	}
 	t.Logf("SIGKILL recovered Run %s, Attempt %s, Turn %s, phase %s", ref.RunID, result.AttemptID, result.TurnID, result.Phase)
+	return result
 }

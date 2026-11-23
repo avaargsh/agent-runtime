@@ -130,8 +130,56 @@ func (s *Store) PrepareAcceptedDecision(ctx context.Context, ref run.AcceptedDec
 	if persisted != checkpoint {
 		return empty, run.ErrDecisionPreparationDenied
 	}
+	// This trusted Activity has persisted its canonical execution and
+	// first business checkpoint in the same transaction. Only now may
+	// Runtime advance the accepted Run to RUNNING. Replay keeps the
+	// original transition timestamp; cancellation holds the same Run lock.
+	tag, err := tx.Exec(ctx, fmt.Sprintf(`
+		UPDATE %s SET status='RUNNING',
+		  updated_at=CASE WHEN status='QUEUED' THEN clock_timestamp() ELSE updated_at END
+		WHERE tenant_id=$1 AND run_id=$2::uuid AND status IN ('QUEUED','RUNNING')
+	`, rel.runs), ref.TenantID, ref.RunID)
+	if err != nil {
+		return empty, run.ErrRepositoryUnavailable
+	}
+	if tag.RowsAffected() != 1 {
+		return empty, run.ErrDecisionPreparationDenied
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return empty, run.ErrRepositoryUnavailable
 	}
 	return persisted, nil
+}
+
+// CancelPreparedDecision is scoped to this pre-Decision Workflow only:
+// there is a committed WAITING_AUTHORITY checkpoint and no external effect.
+// Future post-dispatch cancellation must reconcile effect journals first.
+func (s *Store) CancelPreparedDecision(ctx context.Context, ref run.AcceptedDecisionRef, executionID string) error {
+	id, err := uuid.Parse(executionID)
+	if ref.Validate() != nil || err != nil || id.String() != executionID {
+		return run.ErrDecisionPreparationDenied
+	}
+	rel, err := s.checkpointRelations()
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, fmt.Sprintf(`
+		UPDATE %s r SET status='CANCELLED',
+		  updated_at=CASE WHEN r.status='RUNNING' THEN clock_timestamp() ELSE r.updated_at END
+		FROM %s c
+		WHERE r.tenant_id=$1 AND r.run_id=$2::uuid AND r.workflow_id=$3
+		  AND r.run_intent_id=$4::uuid AND r.source_request_digest=$5
+		  AND r.status IN ('RUNNING','CANCELLED')
+		  AND c.tenant_id=r.tenant_id AND c.run_id=r.run_id
+		  AND c.run_intent_id=r.run_intent_id AND c.request_digest=r.source_request_digest
+		  AND c.workflow_id=r.workflow_id AND c.execution_id=$6::uuid
+		  AND c.phase='WAITING_AUTHORITY'
+	`, rel.runs, rel.checkpoints), ref.TenantID, ref.RunID, ref.WorkflowID, ref.RunIntentID, ref.RequestDigest, executionID)
+	if err != nil {
+		return run.ErrRepositoryUnavailable
+	}
+	if tag.RowsAffected() != 1 {
+		return run.ErrDecisionPreparationDenied
+	}
+	return nil
 }

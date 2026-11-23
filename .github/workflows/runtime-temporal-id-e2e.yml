@@ -6,6 +6,8 @@ on:
       - "internal/store/postgres/runtime_temporal_e2e_test.go"
       - "internal/store/postgres/runtime_start_outbox*"
       - "internal/store/postgres/development_start_dispatch_integration_test.go"
+      - "internal/store/postgres/business_start_dispatch_integration_test.go"
+      - "internal/store/postgres/external_acp_temporal_integration_test.go"
       - "internal/startdispatch/**"
       - "internal/store/postgres/*decision_checkpoint*"
       - "internal/store/postgres/temporal_turn_identity.go"
@@ -52,7 +54,7 @@ jobs:
       - name: Verify patched Go toolchain
         run: test "$(go env GOVERSION)" = "go1.26.11"
       - name: Real Temporal Server + Worker restart, durable Workflow ID and PostgreSQL fencing
-        run: go test -race -count=1 -v -run '^(TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity|TestDevelopmentStartDispatcherRecoversCommittedWorkflowWithoutSecondStart|TestDevelopmentStartDispatcherDoesNotAcknowledgeUnrelatedWorkflow)$' ./internal/store/postgres
+        run: go test -race -count=1 -v -run '^(TestTemporalStartLostACKAndServerWorkerRestartPreservesWorkflowIdentity|TestDevelopmentStartDispatcherRecoversCommittedWorkflowWithoutSecondStart|TestDevelopmentStartDispatcherDoesNotAcknowledgeUnrelatedWorkflow|TestBusinessStartDispatcherUsesRealCheckpointAndRecoversLostACK)$' ./internal/store/postgres
 
       - name: Real Worker SIGKILL after business checkpoint commit and before ACK
         run: |
@@ -62,5 +64,5 @@ jobs:
           grep -Fq -- '--- PASS: TestAcceptedDecisionCheckpointSurvivesWorkerSIGKILL ' "${RUNNER_TEMP}/checkpoint-test.log"
 
 # Uses pinned Temporal CLI v1.10.0 with a file-backed SQLite dev server.
-# The test Workflows do not invoke Decision, external tools or protected
+# The test Workflow does not invoke Decision, external tools or protected
 # side effects. This does not bypass ACP subject/actor/policy gate G01/G05.
