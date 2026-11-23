@@ -143,6 +143,6 @@ func TestExternalACPAdmissionTemporalRecovery(t *testing.T) {
 		runs != 1 || starts != 1 || delivered != 1 || turns != 1 || checkpoints != 1 || status != "CANCELLED" {
 		t.Fatalf("external chain duplicated durable work or lost cancellation: %d/%d/%d/%d/%d/%s %v", runs, starts, delivered, turns, checkpoints, status, err)
 	}
-	t.Logf("external ACP business Run %s, Workflow %s, Temporal execution %s, Attempt %s, Turn %s, recovered WAITING_AUTHORITY then CANCELLED",
-		runID, receipt.WorkflowID, executionID, checkpoint.AttemptID, checkpoint.TurnID)
+	t.Logf("external ACP business Run %s, Workflow %s, Temporal execution %s, Attempt %s, Turn %s, recovered %s then CANCELLED",
+		runID, receipt.WorkflowID, executionID, checkpoint.AttemptID, checkpoint.TurnID, checkpoint.Phase)
 }
