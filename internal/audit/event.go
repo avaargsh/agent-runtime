@@ -27,6 +27,10 @@ const (
 	EventModelResponseReceived  EventType = "MODEL_RESPONSE_RECEIVED"
 	EventModelRequestFailed     EventType = "MODEL_REQUEST_FAILED"
 	EventToolProposed           EventType = "TOOL_PROPOSED"
+	EventProposalCreated        EventType = "PROPOSAL_CREATED"
+	EventProposalPrepared       EventType = "PROPOSAL_PREPARED"
+	EventProposalSuperseded     EventType = "PROPOSAL_SUPERSEDED"
+	EventProposalCommitAuthorized EventType = "PROPOSAL_COMMIT_AUTHORIZED"
 	EventToolCallStarted        EventType = "TOOL_CALL_STARTED"
 	EventToolCallCompleted      EventType = "TOOL_CALL_COMPLETED"
 	EventToolCallFailed         EventType = "TOOL_CALL_FAILED"
@@ -107,7 +111,8 @@ func (e Event) Validate() error {
 		}
 	}
 	switch e.Type {
-	case EventToolProposed:
+	case EventToolProposed, EventProposalCreated, EventProposalPrepared,
+		EventProposalSuperseded, EventProposalCommitAuthorized:
 		if !validIdentifier(e.ProposalID) {
 			return fmt.Errorf("%w: tool proposal requires proposal_id", ErrInvalidEvent)
 		}
@@ -160,7 +165,9 @@ func validEventType(value EventType) bool {
 	switch value {
 	case EventRunStarted, EventRunCancelled,
 		EventModelRequestPrepared, EventModelRequestSent, EventModelResponseReceived, EventModelRequestFailed,
-		EventToolProposed, EventToolCallStarted, EventToolCallCompleted, EventToolCallFailed,
+		EventToolProposed, EventProposalCreated, EventProposalPrepared,
+		EventProposalSuperseded, EventProposalCommitAuthorized,
+		EventToolCallStarted, EventToolCallCompleted, EventToolCallFailed,
 		EventFileOperationObserved, EventShellOperationObserved, EventNetworkEgressObserved,
 		EventPolicyAllowed, EventPolicyDenied, EventApprovalRequested, EventApprovalResolved,
 		EventDataProtected, EventDataRestored, EventSecurityDenied,
