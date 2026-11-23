@@ -105,15 +105,15 @@ func (s *Store) guardRunSnapshot(ctx context.Context, tenantID, runID string, re
 		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: unknown persisted Run status", run.ErrInvalidIdentity)
 	}
 	if !breakerState.Valid || !breakerEpoch.Valid || !breakerVersion.Valid {
-		return run.GuardRunSafetySnapshot{}, ErrBreakerNotFound
+		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: %w", run.ErrInvalidIdentity, ErrBreakerNotFound)
 	}
 	if breakerEpoch.Int64 < 1 || breakerVersion.Int64 < 1 {
-		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: invalid Run breaker fencing version", ErrBreakerNotFound)
+		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: %w: invalid Run breaker fencing version", run.ErrInvalidIdentity, ErrBreakerNotFound)
 	}
 	switch breakerState.String {
 	case "CLOSED", "OPEN", "HALF_OPEN":
 	default:
-		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: unrecognized Run breaker state", ErrBreakerNotFound)
+		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: %w: unrecognized Run breaker state", run.ErrInvalidIdentity, ErrBreakerNotFound)
 	}
 	result.BreakerState = breakerState.String
 	result.BreakerEpoch = uint64(breakerEpoch.Int64)
