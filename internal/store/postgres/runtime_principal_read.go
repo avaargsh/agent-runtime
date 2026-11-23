@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/google/uuid"
@@ -20,13 +21,14 @@ func (s *Store) GetRunPrincipalSnapshot(ctx context.Context, tenantID, runID str
 	if s == nil || s.pool == nil {
 		return run.PrincipalSnapshot{}, errors.New("Runtime PostgreSQL store unavailable")
 	}
-	if _, err := uuid.Parse(runID); err != nil || tenantID == "" ||
+	canonical, err := uuid.Parse(runID)
+	if err != nil || canonical.String() != runID || tenantID == "" ||
 		tenantID != strings.TrimSpace(tenantID) || len(tenantID) > 255 ||
-		strings.ContainsAny(tenantID, "\x00\r\n\t") {
+		!utf8.ValidString(tenantID) || strings.ContainsAny(tenantID, "\x00\r\n\t") {
 		return run.PrincipalSnapshot{}, run.ErrInvalidRequest
 	}
 	var snapshot run.PrincipalSnapshot
-	err := s.pool.QueryRow(ctx, `
+	err = s.pool.QueryRow(ctx, `
 		SELECT p.snapshot_version, p.issuer_spiffe_id, p.project_id,
 		       p.subject_id, p.actor_id, p.policy_revision, p.config_digest
 		FROM runtime_run_principal_snapshots AS p
