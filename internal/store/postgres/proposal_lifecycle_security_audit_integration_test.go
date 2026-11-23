@@ -138,3 +138,32 @@ func TestProposalLifecycleAuditFailureRollsBackPrepareAndOutbox(t *testing.T) {
 		t.Fatalf("a failed security-audit transaction still emitted %d prepared outbox event(s)", preparedOutbox)
 	}
 }
+
+func TestProposalSupersessionLeavesImmutableSecurityAudit(t *testing.T) {
+	h, proposal := newProposalStore(t, 11)
+	ctx := context.Background()
+	if err := h.store.CreateProposal(ctx, proposal); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.AdvanceTurnIntent(
+		ctx, h.tenantID, h.runID, h.turnID, 11, 12, true,
+	); err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.store.GetProposal(ctx, h.tenantID, proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != executionsafety.ProposalSuperseded {
+		t.Fatalf("old uncommitted Proposal was not superseded: %+v", got)
+	}
+	facts, err := h.store.ListProposalSecurityAudit(ctx, h.tenantID, h.runID, proposal.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 2 ||
+		string(facts[0].EventType) != "PROPOSAL_CREATED" ||
+		string(facts[1].EventType) != "PROPOSAL_SUPERSEDED" {
+		t.Fatalf("superseded proposal lost independent lifecycle evidence: %+v", facts)
+	}
+}
