@@ -66,8 +66,9 @@ func NewRunSafetyHandler(store RunSafetyReader, peer, tenant string) (http.Handl
 			return
 		}
 		if err != nil {
-			// A missing/malformed breaker is indistinguishable here from an
-			// unavailable authority. No stale snapshot or internal SQL leaks.
+			// Authoritative missing/invalid breaker state is denied above.
+			// Only a failed authority read remains unavailable (503).
+			// Never fall back to a stale snapshot or expose internal SQL.
 			writeError(w, http.StatusServiceUnavailable, "RUN_SAFETY_UNAVAILABLE")
 			return
 		}
