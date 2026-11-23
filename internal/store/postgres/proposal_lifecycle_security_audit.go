@@ -22,7 +22,7 @@ type proposalLifecycleAuditPayload struct {
 	EventID             string                        `json:"event_id"`
 	EventType           audit.EventType               `json:"event_type"`
 	OccurredAt          time.Time                     `json:"occurred_at"`
-	Identity            proposalLifecycleAuditScope    `json:"identity"`
+	Identity            proposalLifecycleAuditScope   `json:"identity"`
 	ProposalID          string                        `json:"proposal_id"`
 	ProposalVersion     int64                         `json:"proposal_version"`
 	IntentRevision      int64                         `json:"intent_revision"`
