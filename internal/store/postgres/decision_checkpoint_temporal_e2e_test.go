@@ -264,6 +264,12 @@ func recoverAcceptedDecisionWorker(t *testing.T, ctx context.Context, pool *pgxp
 			}
 			verify.Env = append(verify.Env, name+"="+value)
 		}
+		// Pass an independently compiled Guard test driver to the already
+		// isolated Decision process. This test-only path never passes
+		// Runtime or Guard database credentials to one another.
+		if guardBin := os.Getenv("DECISION_LIVE_GUARD_BIN"); guardBin != "" {
+			verify.Env = append(verify.Env, "DECISION_LIVE_GUARD_BIN="+guardBin)
+		}
 		var output []byte
 		var err error
 		if os.Getenv("RUNTIME_EXTERNAL_LIVE_CONTINUATION") == "1" {
