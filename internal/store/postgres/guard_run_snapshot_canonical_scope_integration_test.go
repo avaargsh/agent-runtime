@@ -28,6 +28,7 @@ func TestGuardRunSafetyReadersRejectNoncanonicalRunIDAliases(t *testing.T) {
 	aliases := []string{
 		strings.ReplaceAll(receipt.RunID, "-", ""),
 		"urn:uuid:" + receipt.RunID,
+		"{" + receipt.RunID + "}",
 		receipt.RunID + " ",
 	}
 	for _, alias := range aliases {
