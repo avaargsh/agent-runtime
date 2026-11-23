@@ -270,6 +270,27 @@ func recoverAcceptedDecisionWorker(t *testing.T, ctx context.Context, pool *pgxp
 		if guardBin := os.Getenv("DECISION_LIVE_GUARD_BIN"); guardBin != "" {
 			verify.Env = append(verify.Env, "DECISION_LIVE_GUARD_BIN="+guardBin)
 		}
+		// Exact scoped test-only cross-process endpoints for the original
+		// accepted ACP Run. Runtime never reads the Guard private key or
+		// alters authority decisions: it only forwards encrypted fixture
+		// paths and URLs to the independent Decision/Guard test process.
+		for _, name := range []string{
+			"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_ORIGIN",
+			"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_PEER",
+			"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_ROOTS",
+			"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_CERT",
+			"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_KEY",
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_ORIGIN",
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_PEER",
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_ROOTS",
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_CERT",
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_KEY",
+			"DECISION_LIVE_GUARD_COMPOSED_SYNC_DIR",
+		} {
+			if value := os.Getenv(name); value != "" {
+				verify.Env = append(verify.Env, name+"="+value)
+			}
+		}
 		var output []byte
 		var err error
 		if os.Getenv("RUNTIME_EXTERNAL_LIVE_CONTINUATION") == "1" {
