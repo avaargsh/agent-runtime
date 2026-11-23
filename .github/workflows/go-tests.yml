@@ -2,8 +2,9 @@ name: Go Runtime tests
 
 on:
   pull_request:
+  # Validate the final merge commit, not only its pull-request source head.
   push:
-    branches: ['feature/**']
+    branches: ['main', 'feature/**']
 
 permissions:
   contents: read
