@@ -568,16 +568,20 @@ func appendProposalEvent(
 	if err != nil {
 		return fmt.Errorf("marshal Proposal event: %w", err)
 	}
+	eventID := uuid.NewString()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO runtime_execution_outbox (
 			event_id, tenant_id, run_id, turn_id, aggregate_type, proposal_id,
 			aggregate_version, event_type, payload, created_at
 		)
 		VALUES ($1::uuid,$2,$3::uuid,$4,'TOOL_PROPOSAL',$5,$6,$7,$8::jsonb,$9)
-	`, uuid.NewString(), proposal.TenantID, proposal.RunID, proposal.TurnID,
+	`, eventID, proposal.TenantID, proposal.RunID, proposal.TurnID,
 		proposal.ID, proposal.Version, eventType, string(payload), at)
 	if err != nil {
 		return fmt.Errorf("append Proposal execution event: %w", err)
+	}
+	if err := appendProposalLifecycleAuditTx(ctx, tx, eventID, eventType, proposal, at); err != nil {
+		return err
 	}
 	return nil
 }
