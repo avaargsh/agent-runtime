@@ -26,7 +26,7 @@ func TestProposalSecurityAuditReadScopesRunAndReturnsMetadataOnly(t *testing.T) 
 		EventID: "proposal-audit-first", OccurredAt: time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC),
 		Type: audit.EventToolCallStarted, Identity: identity, Source: "trusted-tool-adapter",
 		ProposalID: proposal.ID, ToolCallID: "tool-1", Outcome: audit.OutcomeDispatched,
-		Action: "synthetic-secret-never-return-from-proposal-audit",
+		Action:        "synthetic-secret-never-return-from-proposal-audit",
 		PayloadDigest: proposalDigest,
 	}
 	second := first
@@ -84,8 +84,8 @@ func TestProposalSecurityAuditReadFailsClosedForScopeAndBounds(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		tenant, runID, proposalID string
-		limit int
-		want error
+		limit                     int
+		want                      error
 	}{
 		{h.tenantID, h.runID, proposal.ID, 0, postgres.ErrInvalidProposalAuditQuery},
 		{h.tenantID, h.runID, proposal.ID, 101, postgres.ErrInvalidProposalAuditQuery},
