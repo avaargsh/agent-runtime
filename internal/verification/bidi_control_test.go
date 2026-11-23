@@ -7,7 +7,7 @@ import "testing"
 // matching. They must not be accepted in any v1 identity or report field.
 func TestAssessRejectsBidiControlsInIdentityAndEvidence(t *testing.T) {
 	tests := []struct {
-		name string
+		name   string
 		mutate func(*Manifest, *Report)
 	}{
 		{"tenant-override", func(m *Manifest, r *Report) {
