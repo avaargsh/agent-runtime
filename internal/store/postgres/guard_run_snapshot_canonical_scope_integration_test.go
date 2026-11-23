@@ -35,7 +35,7 @@ func TestGuardRunSafetyReadersRejectNoncanonicalRunIDAliases(t *testing.T) {
 		t.Run(alias, func(t *testing.T) {
 			for name, read := range map[string]func(context.Context, string, string) (run.GuardRunSafetySnapshot, error){
 				"diagnostic": store.GetGuardRunSafetySnapshot,
-				"trusted": store.GetTrustedGuardRunSafetySnapshot,
+				"trusted":    store.GetTrustedGuardRunSafetySnapshot,
 			} {
 				_, err := read(ctx, receipt.TenantID, alias)
 				if !errors.Is(err, run.ErrInvalidRequest) {
@@ -55,7 +55,7 @@ func TestGuardRunSafetyReadersRejectInvalidUTF8Tenant(t *testing.T) {
 	tenant := "tenant-" + string([]byte{0xff})
 	for name, read := range map[string]func(context.Context, string, string) (run.GuardRunSafetySnapshot, error){
 		"diagnostic": store.GetGuardRunSafetySnapshot,
-		"trusted": store.GetTrustedGuardRunSafetySnapshot,
+		"trusted":    store.GetTrustedGuardRunSafetySnapshot,
 	} {
 		_, err := read(ctx, tenant, runID)
 		if !errors.Is(err, run.ErrInvalidRequest) {
