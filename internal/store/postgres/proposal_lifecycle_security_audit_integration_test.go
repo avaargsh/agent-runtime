@@ -32,9 +32,9 @@ func TestProposalLifecycleAppendsIndependentSecurityAudit(t *testing.T) {
 	}
 	linked, err := h.store.LinkGuardOperation(ctx, executionsafety.GuardOperationLink{
 		TenantID: h.tenantID, ProposalID: proposal.ID,
-		GuardSubmissionKey: committed.GuardSubmissionKey,
+		GuardSubmissionKey:  committed.GuardSubmissionKey,
 		ActionRequestDigest: committed.ActionRequestDigest,
-		OperationID: "guard-operation-audit-001",
+		OperationID:         "guard-operation-audit-001",
 	})
 	if err != nil {
 		t.Fatal(err)
