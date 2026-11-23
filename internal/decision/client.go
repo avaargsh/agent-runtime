@@ -94,7 +94,7 @@ func (c Client) Invoke(ctx context.Context, turn Turn, identity run.Identity) (R
 	claims := trustedContext.Claims()
 	if claims.TenantID != identity.TenantID || claims.AgentID != identity.AgentID ||
 		claims.AgentReleaseID != identity.AgentReleaseID || claims.SessionID != identity.SessionID ||
-		claims.RunID != identity.RunID {
+		claims.RunID != identity.RunID || claims.TurnID != turn.TurnID {
 		return result, ErrRunIdentityMismatch
 	}
 
