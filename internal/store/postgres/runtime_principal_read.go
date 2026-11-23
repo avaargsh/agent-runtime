@@ -28,7 +28,7 @@ func (s *Store) GetRunPrincipalSnapshot(ctx context.Context, tenantID, runID str
 		return run.PrincipalSnapshot{}, run.ErrInvalidRequest
 	}
 	var snapshot run.PrincipalSnapshot
-	err := s.pool.QueryRow(ctx, `
+	err = s.pool.QueryRow(ctx, `
 		SELECT p.snapshot_version, p.issuer_spiffe_id, p.project_id,
 		       p.subject_id, p.actor_id, p.policy_revision, p.config_digest
 		FROM runtime_run_principal_snapshots AS p
