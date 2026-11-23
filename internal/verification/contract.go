@@ -85,8 +85,19 @@ type Assessment struct {
 	MissingRequired []string `json:"missing_required,omitempty"`
 }
 
+// Bidi controls are valid UTF-8 and not unicode.IsControl (Cc), but they
+// can change the displayed order of otherwise byte-identical security
+// identifiers, check IDs and evidence references. Ordinary RTL text is valid.
+func isBidiControl(r rune) bool {
+	return r == '\u061c' || r == '\u200e' || r == '\u200f' ||
+		(r >= '\u202a' && r <= '\u202e') ||
+		(r >= '\u2066' && r <= '\u2069')
+}
+
 func nonBlank(s string) bool {
-	return s != "" && utf8.ValidString(s) && strings.TrimSpace(s) == s && strings.IndexFunc(s, unicode.IsControl) == -1
+	return s != "" && utf8.ValidString(s) && strings.TrimSpace(s) == s &&
+		strings.IndexFunc(s, unicode.IsControl) == -1 &&
+		strings.IndexFunc(s, isBidiControl) == -1
 }
 
 func boundedNonBlank(s string, maxBytes int) bool {
