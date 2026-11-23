@@ -50,7 +50,7 @@ func NewHandler(store Store, expectedSPIFFEID string) (http.Handler, error) {
 func validWorkloadIdentity(identity string) bool {
 	u, err := url.Parse(identity)
 	return err == nil && u.Scheme == "spiffe" && u.Host != "" &&
-		u.Path != "" && u.User == nil && u.Opaque == "" && u.RawPath == "" &&
+		u.Port() == "" && u.Path != "" && u.Path != "/" && u.User == nil && u.Opaque == "" && u.RawPath == "" &&
 		u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.String() == identity
 }
 
