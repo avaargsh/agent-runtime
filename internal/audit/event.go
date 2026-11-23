@@ -20,29 +20,33 @@ var (
 type EventType string
 
 const (
-	EventRunStarted             EventType = "RUN_STARTED"
-	EventRunCancelled           EventType = "RUN_CANCELLED"
-	EventModelRequestPrepared   EventType = "MODEL_REQUEST_PREPARED"
-	EventModelRequestSent       EventType = "MODEL_REQUEST_SENT"
-	EventModelResponseReceived  EventType = "MODEL_RESPONSE_RECEIVED"
-	EventModelRequestFailed     EventType = "MODEL_REQUEST_FAILED"
-	EventToolProposed           EventType = "TOOL_PROPOSED"
-	EventToolCallStarted        EventType = "TOOL_CALL_STARTED"
-	EventToolCallCompleted      EventType = "TOOL_CALL_COMPLETED"
-	EventToolCallFailed         EventType = "TOOL_CALL_FAILED"
-	EventFileOperationObserved  EventType = "FILE_OPERATION_OBSERVED"
-	EventShellOperationObserved EventType = "SHELL_OPERATION_OBSERVED"
-	EventNetworkEgressObserved  EventType = "NETWORK_EGRESS_OBSERVED"
-	EventPolicyAllowed          EventType = "POLICY_ALLOWED"
-	EventPolicyDenied           EventType = "POLICY_DENIED"
-	EventApprovalRequested      EventType = "APPROVAL_REQUESTED"
-	EventApprovalResolved       EventType = "APPROVAL_RESOLVED"
-	EventDataProtected          EventType = "DATA_PROTECTED"
-	EventDataRestored           EventType = "DATA_RESTORED"
-	EventSecurityDenied         EventType = "SECURITY_DENIED"
-	EventBreakerTripped         EventType = "BREAKER_TRIPPED"
-	EventBreakerRecovered       EventType = "BREAKER_RECOVERED"
-	EventGuardOperationLinked   EventType = "GUARD_OPERATION_LINKED"
+	EventRunStarted               EventType = "RUN_STARTED"
+	EventRunCancelled             EventType = "RUN_CANCELLED"
+	EventModelRequestPrepared     EventType = "MODEL_REQUEST_PREPARED"
+	EventModelRequestSent         EventType = "MODEL_REQUEST_SENT"
+	EventModelResponseReceived    EventType = "MODEL_RESPONSE_RECEIVED"
+	EventModelRequestFailed       EventType = "MODEL_REQUEST_FAILED"
+	EventToolProposed             EventType = "TOOL_PROPOSED"
+	EventProposalCreated          EventType = "PROPOSAL_CREATED"
+	EventProposalPrepared         EventType = "PROPOSAL_PREPARED"
+	EventProposalSuperseded       EventType = "PROPOSAL_SUPERSEDED"
+	EventProposalCommitAuthorized EventType = "PROPOSAL_COMMIT_AUTHORIZED"
+	EventToolCallStarted          EventType = "TOOL_CALL_STARTED"
+	EventToolCallCompleted        EventType = "TOOL_CALL_COMPLETED"
+	EventToolCallFailed           EventType = "TOOL_CALL_FAILED"
+	EventFileOperationObserved    EventType = "FILE_OPERATION_OBSERVED"
+	EventShellOperationObserved   EventType = "SHELL_OPERATION_OBSERVED"
+	EventNetworkEgressObserved    EventType = "NETWORK_EGRESS_OBSERVED"
+	EventPolicyAllowed            EventType = "POLICY_ALLOWED"
+	EventPolicyDenied             EventType = "POLICY_DENIED"
+	EventApprovalRequested        EventType = "APPROVAL_REQUESTED"
+	EventApprovalResolved         EventType = "APPROVAL_RESOLVED"
+	EventDataProtected            EventType = "DATA_PROTECTED"
+	EventDataRestored             EventType = "DATA_RESTORED"
+	EventSecurityDenied           EventType = "SECURITY_DENIED"
+	EventBreakerTripped           EventType = "BREAKER_TRIPPED"
+	EventBreakerRecovered         EventType = "BREAKER_RECOVERED"
+	EventGuardOperationLinked     EventType = "GUARD_OPERATION_LINKED"
 )
 
 type Outcome string
@@ -107,7 +111,8 @@ func (e Event) Validate() error {
 		}
 	}
 	switch e.Type {
-	case EventToolProposed:
+	case EventToolProposed, EventProposalCreated, EventProposalPrepared,
+		EventProposalSuperseded, EventProposalCommitAuthorized:
 		if !validIdentifier(e.ProposalID) {
 			return fmt.Errorf("%w: tool proposal requires proposal_id", ErrInvalidEvent)
 		}
@@ -160,7 +165,9 @@ func validEventType(value EventType) bool {
 	switch value {
 	case EventRunStarted, EventRunCancelled,
 		EventModelRequestPrepared, EventModelRequestSent, EventModelResponseReceived, EventModelRequestFailed,
-		EventToolProposed, EventToolCallStarted, EventToolCallCompleted, EventToolCallFailed,
+		EventToolProposed, EventProposalCreated, EventProposalPrepared,
+		EventProposalSuperseded, EventProposalCommitAuthorized,
+		EventToolCallStarted, EventToolCallCompleted, EventToolCallFailed,
 		EventFileOperationObserved, EventShellOperationObserved, EventNetworkEgressObserved,
 		EventPolicyAllowed, EventPolicyDenied, EventApprovalRequested, EventApprovalResolved,
 		EventDataProtected, EventDataRestored, EventSecurityDenied,

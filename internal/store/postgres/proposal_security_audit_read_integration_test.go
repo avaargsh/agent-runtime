@@ -57,10 +57,35 @@ func TestProposalSecurityAuditReadScopesRunAndReturnsMetadataOnly(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ListProposalSecurityAudit: %v", err)
 	}
-	if len(got) != 2 || got[0].EventID != first.EventID || got[1].EventID != second.EventID ||
-		got[0].EventType != first.Type || got[1].EventType != second.Type ||
-		got[0].PayloadDigest != proposalDigest || got[0].Source != first.Source {
-		t.Fatalf("incorrect durable proposal audit metadata: %+v", got)
+	// The canonical Proposal creation now emits its own independent audit
+	// fact. Explicit trusted tool facts still remain ordered and isolated.
+	if len(got) != 3 {
+		t.Fatalf("incorrect durable Proposal + tool audit count: %+v", got)
+	}
+	created, firstIndex, secondIndex := false, -1, -1
+	for i, fact := range got {
+		switch fact.EventID {
+		case first.EventID:
+			firstIndex = i
+			if fact.EventType != first.Type || fact.PayloadDigest != proposalDigest ||
+				fact.Source != first.Source {
+				t.Fatalf("incorrect first tool audit fact: %+v", fact)
+			}
+		case second.EventID:
+			secondIndex = i
+			if fact.EventType != second.Type {
+				t.Fatalf("incorrect second tool audit fact: %+v", fact)
+			}
+		default:
+			if fact.EventType != audit.EventProposalCreated ||
+				fact.Source != "runtime-proposal-state" {
+				t.Fatalf("unexpected audit event in Proposal scope: %+v", fact)
+			}
+			created = true
+		}
+	}
+	if !created || firstIndex < 0 || secondIndex <= firstIndex {
+		t.Fatalf("missing or reordered audited events: %+v", got)
 	}
 	serialized, err := json.Marshal(got)
 	if err != nil {
@@ -71,7 +96,7 @@ func TestProposalSecurityAuditReadScopesRunAndReturnsMetadataOnly(t *testing.T) 
 		t.Fatalf("proposal metadata read exposed audit payload: %s", serialized)
 	}
 	page, err := h.store.ListProposalSecurityAudit(ctx, h.tenantID, h.runID, proposal.ID, 1)
-	if err != nil || len(page) != 1 || page[0].EventID != first.EventID {
+	if err != nil || len(page) != 1 || page[0].EventID != got[0].EventID {
 		t.Fatalf("bounded oldest-first audit: records=%+v err=%v", page, err)
 	}
 }
