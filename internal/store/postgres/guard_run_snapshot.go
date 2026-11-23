@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/google/uuid"
@@ -36,13 +37,13 @@ func (s *Store) guardRunSnapshot(ctx context.Context, tenantID, runID string, re
 	if s == nil || s.pool == nil {
 		return result, errors.New("Runtime Run authority database unavailable")
 	}
-	if tenantID == "" || len(tenantID) > 255 ||
+	if tenantID == "" || len(tenantID) > 255 || !utf8.ValidString(tenantID) ||
 		strings.TrimSpace(tenantID) != tenantID || strings.ContainsAny(tenantID, "\x00\r\n\t") {
 		return result, fmt.Errorf("%w: invalid tenant scope", run.ErrInvalidRequest)
 	}
 	canonical, err := uuid.Parse(runID)
-	if err != nil {
-		return result, fmt.Errorf("%w: malformed Run ID", run.ErrInvalidRequest)
+	if err != nil || canonical.String() != runID {
+		return result, fmt.Errorf("%w: noncanonical Run ID", run.ErrInvalidRequest)
 	}
 
 	_, runs, principals, _, err := s.harnessRelations()
