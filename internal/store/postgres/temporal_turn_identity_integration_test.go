@@ -104,6 +104,26 @@ func TestTemporalTurnConcurrentSameExecutionHasOneAuthorityRecord(t *testing.T) 
 	if attempts != 1 || turns != 1 {
 		t.Fatalf("concurrent Temporal retries created duplicates: attempts=%d turns=%d", attempts, turns)
 	}
+	var currentCount int
+	var attemptID, executionID string
+	var generation, epoch int64
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_current_attempts").Scan(&currentCount); err != nil {
+		t.Fatal(err)
+	}
+	if currentCount != 1 {
+		t.Fatalf("concurrent retries persisted %d current Attempt pointers, want one", currentCount)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT c.attempt_id::text, a.temporal_execution_id::text, c.generation, c.breaker_epoch
+		FROM runtime_current_attempts c
+		JOIN runtime_run_attempts a ON a.tenant_id=c.tenant_id AND a.run_id=c.run_id AND a.run_attempt_id=c.attempt_id
+		WHERE c.tenant_id=$1 AND c.run_id=$2::uuid
+	`, r.TenantID, r.RunID).Scan(&attemptID, &executionID, &generation, &epoch); err != nil {
+		t.Fatal(err)
+	}
+	if attemptID != first.RunAttemptID || executionID != firstTemporalExecutionID || generation != 1 || epoch != 1 {
+		t.Fatalf("concurrent retries changed current authority: attempt=%s execution=%s generation=%d epoch=%d", attemptID, executionID, generation, epoch)
+	}
 }
 
 func TestTemporalTurnIdentityRejectsUnboundLegacyWrongScopeAndMalformedExecution(t *testing.T) {
