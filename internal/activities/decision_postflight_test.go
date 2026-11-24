@@ -137,7 +137,7 @@ func TestInvokeDecisionRejectsBreakerVersionDriftAfterTemporalTurnBinding(t *tes
 	client := &immediateDecisionInvoker{}
 	activity := Activities{
 		Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 	}
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
@@ -161,7 +161,7 @@ func TestInvokeDecisionRejectsBreakerVersionDriftBeforeFirstPoll(t *testing.T) {
 		Breakers: store,
 		Client:   flipBreakerBeforeReturn{store: store, next: drifted},
 		Runs:     testRunIdentityReader(), Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 		PollInterval:  time.Hour,
 	}
