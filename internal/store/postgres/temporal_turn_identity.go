@@ -170,7 +170,10 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		if err != nil {
 			return empty, fmt.Errorf("read current Runtime Temporal Attempt authority: %w", err)
 		}
-		if attemptGeneration < 1 || authorityBreakerEpoch != breakerEpoch {
+		// Generation one is the only enabled authority contract. A positive
+		// generation above one is not a transition: Decision and Guard also
+		// fail closed until an explicit fenced continuation is implemented.
+		if attemptGeneration != 1 || authorityBreakerEpoch != breakerEpoch {
 			return empty, ErrTemporalExecutionConflict
 		}
 	}

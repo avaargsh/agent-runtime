@@ -287,3 +287,70 @@ func TestTemporalTurnTwoTenantsRevocationFencesRecoveredIdentity(t *testing.T) {
 		t.Fatalf("denied cross-tenant/revoked replays mutated durable state: attempts=%d turns=%d", attempts, turns)
 	}
 }
+
+// Until an explicit generation transition is implemented, Temporal Turn
+// binding must reject a current pointer that claims any generation other
+// than one. This fixture simulates privileged catalog drift after startup:
+// the v13 CHECK and immutable trigger are weakened after the Store is live.
+// Startup catalog verification alone cannot protect an already-running
+// process from later out-of-band DDL/DML.
+func TestTemporalTurnRejectsUnsupportedCurrentAttemptGeneration(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	command := testIntent()
+	command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
+	principal := trustedSnapshot()
+	principal.ActorID = principal.SubjectID
+	accepted, err := store.AcceptIntentWithPrincipal(ctx, command, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := run.AcceptedDecisionRef{
+		TenantID: accepted.TenantID, RunID: accepted.RunID, WorkflowID: accepted.WorkflowID,
+		RunIntentID: accepted.RunIntentID, RequestDigest: accepted.RequestDigest,
+	}
+	checkpoint, err := store.PrepareAcceptedDecision(ctx, ref, firstTemporalExecutionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.RunID != ref.RunID || checkpoint.TurnID == "" {
+		t.Fatalf("initial business checkpoint missing: %+v", checkpoint)
+	}
+
+	// This is not a supported generation transition. It deliberately bypasses
+	// the database guard after startup to prove the live read path still fails
+	// closed if the schema is weakened while a worker remains running.
+	if _, err := pool.Exec(ctx, "ALTER TABLE runtime_current_attempts DISABLE TRIGGER runtime_current_attempt_no_mutation"); err != nil {
+		t.Fatalf("disable fixture immutability trigger: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "ALTER TABLE runtime_current_attempts DROP CONSTRAINT runtime_current_attempts_generation_check"); err != nil {
+		t.Fatalf("weaken fixture generation constraint: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE runtime_current_attempts SET generation=2 WHERE tenant_id=$1 AND run_id=$2::uuid", ref.TenantID, ref.RunID); err != nil {
+		t.Fatalf("persist post-startup generation drift: %v", err)
+	}
+
+	if got, err := store.GetOrCreateTemporalTurn(ctx, ref.TenantID, ref.RunID, ref.WorkflowID, firstTemporalExecutionID, 2); !errors.Is(err, postgres.ErrTemporalExecutionConflict) || got != (run.TemporalTurnIdentity{}) {
+		t.Fatalf("unsupported generation created a new Temporal Turn: %+v err=%v", got, err)
+	}
+	if got, err := store.PrepareAcceptedDecision(ctx, ref, firstTemporalExecutionID); !errors.Is(err, postgres.ErrTemporalExecutionConflict) || got != (run.DecisionCheckpoint{}) {
+		t.Fatalf("unsupported generation replayed a business checkpoint: %+v err=%v", got, err)
+	}
+
+	var generation, turns, checkpoints, acceptances int
+	var status string
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT generation FROM runtime_current_attempts WHERE tenant_id=$1 AND run_id=$2::uuid),
+			(SELECT count(*) FROM runtime_decision_turns WHERE tenant_id=$1 AND run_id=$2::uuid),
+			(SELECT count(*) FROM runtime_decision_checkpoints WHERE tenant_id=$1 AND run_id=$2::uuid),
+			(SELECT count(*) FROM runtime_decision_acceptances WHERE tenant_id=$1 AND run_id=$2::uuid),
+			(SELECT status FROM runs WHERE tenant_id=$1 AND run_id=$2::uuid)
+	`, ref.TenantID, ref.RunID).Scan(&generation, &turns, &checkpoints, &acceptances, &status); err != nil {
+		t.Fatal(err)
+	}
+	if generation != 2 || turns != 1 || checkpoints != 1 || acceptances != 0 || status != "RUNNING" {
+		t.Fatalf("rejected generation drift changed durable business state: generation=%d turns=%d checkpoints=%d acceptances=%d status=%s",
+			generation, turns, checkpoints, acceptances, status)
+	}
+}
