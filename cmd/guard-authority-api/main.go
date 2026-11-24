@@ -40,7 +40,7 @@ func readConfig(getenv func(string) string) (config, error) {
 		return config{}, errors.New("missing Guard authority API configuration")
 	}
 	if c.addr == "" {
-		c.addr = "127.0.0.1:8446"
+		c.addr = ":8446"
 	}
 	return c, nil
 }
