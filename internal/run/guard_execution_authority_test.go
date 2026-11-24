@@ -41,7 +41,7 @@ func TestGuardExecutionAuthorityRejectsUnboundOrStaleFields(t *testing.T) {
 		mutate func(*GuardExecutionAuthority)
 	}{
 		{"schema", func(a *GuardExecutionAuthority) { a.SchemaVersion = "runtime.guard-execution-authority.v2" }},
-		{"workflow", func(a *GuardExecutionAuthority) { a.WorkflowID = "agent-run/v1/" + a.RunID }},
+		{"workflow", func(a *GuardExecutionAuthority) { a.WorkflowID = "not-the-acp-workflow/" + a.RunID }},
 		{"noncanonical run", func(a *GuardExecutionAuthority) { a.RunID = "11111111111141118111111111111111" }},
 		{"noncanonical execution", func(a *GuardExecutionAuthority) { a.TemporalExecutionID = "22222222-2222-4222-8222-22222222222A" }},
 		{"attempt missing", func(a *GuardExecutionAuthority) { a.RunAttemptID = "" }},
