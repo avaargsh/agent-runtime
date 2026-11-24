@@ -3,10 +3,15 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -115,5 +120,84 @@ func TestGuardExecutionAuthorityRejectsBreakerVersionDriftAndTerminalRun(t *test
 	}
 	if got, err := store.GetTrustedGuardExecutionAuthority(ctx, receipt.TenantID, receipt.RunID, turn.TurnID); !errors.Is(err, run.ErrGuardExecutionAuthorityDenied) || got != (run.GuardExecutionAuthority{}) {
 		t.Fatalf("terminal Run authority was returned: %+v err=%v", got, err)
+	}
+}
+
+func TestGuardExecutionAuthorityWorksWithSelectOnlyDatabaseRole(t *testing.T) {
+	pool, _, receipt := runningPrincipalRun(t)
+	ctx := context.Background()
+	turn, err := postgres.New(pool).GetOrCreateTemporalTurn(ctx, receipt.TenantID, receipt.RunID, receipt.WorkflowID, guardAuthorityExecutionID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	schema := pool.Config().ConnConfig.RuntimeParams["search_path"]
+	if schema == "" {
+		schema = "public"
+	}
+	role := "guard_ro_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	password := uuid.NewString()
+	roleIdent := pgx.Identifier{role}.Sanitize()
+	schemaIdent := pgx.Identifier{schema}.Sanitize()
+	if _, err := pool.Exec(ctx, fmt.Sprintf(
+		"CREATE ROLE %s LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION",
+		roleIdent, password,
+	)); err != nil {
+		t.Skipf("TEST_DATABASE_URL cannot create a least-privilege database role: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DROP OWNED BY "+roleIdent)
+		_, _ = pool.Exec(context.Background(), "DROP ROLE "+roleIdent)
+	})
+	if _, err := pool.Exec(ctx, "GRANT USAGE ON SCHEMA "+schemaIdent+" TO "+roleIdent); err != nil {
+		t.Fatal(err)
+	}
+	tables := []string{
+		"runs", "runtime_run_principal_snapshots", "runtime_run_attempts",
+		"runtime_current_attempts", "runtime_decision_turns", "runtime_circuit_breakers",
+	}
+	qualified := make([]string, 0, len(tables))
+	for _, table := range tables {
+		qualified = append(qualified, pgx.Identifier{schema, table}.Sanitize())
+	}
+	if _, err := pool.Exec(ctx, "GRANT SELECT ON TABLE "+strings.Join(qualified, ",")+" TO "+roleIdent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "ALTER ROLE "+roleIdent+" SET default_transaction_read_only=on"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.User = role
+	cfg.ConnConfig.Password = password
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = make(map[string]string)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	readOnlyPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(readOnlyPool.Close)
+	if err := readOnlyPool.Ping(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var readOnly string
+	if err := readOnlyPool.QueryRow(ctx, "SHOW transaction_read_only").Scan(&readOnly); err != nil || readOnly != "on" {
+		t.Fatalf("Guard DB role transaction_read_only=%q err=%v", readOnly, err)
+	}
+	got, err := postgres.New(readOnlyPool).GetTrustedGuardExecutionAuthority(ctx, receipt.TenantID, receipt.RunID, turn.TurnID)
+	if err != nil || got.RunAttemptID == "" || got.TurnID != turn.TurnID {
+		t.Fatalf("SELECT-only role could not read Guard authority: %+v err=%v", got, err)
+	}
+	if _, err := readOnlyPool.Exec(ctx,
+		"UPDATE runs SET status='CANCELLED' WHERE tenant_id=$1 AND run_id=$2::uuid",
+		receipt.TenantID, receipt.RunID,
+	); err == nil {
+		t.Fatal("Guard database role unexpectedly mutated Runtime Run state")
 	}
 }
