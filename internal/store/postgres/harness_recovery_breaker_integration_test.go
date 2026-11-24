@@ -90,7 +90,6 @@ func TestHarnessRecoveryDeniesRevokedBreakerPreservesHistory(t *testing.T) {
 	check("missing breaker")
 }
 
-
 // A confirmed historical Harness binding remains available for cancellation,
 // but it cannot be loaded as a current session after its generation-one
 // pointer is absent. The v13 migration deliberately does not backfill it.
