@@ -321,13 +321,14 @@ func TestTemporalTurnRejectsUnsupportedCurrentAttemptGeneration(t *testing.T) {
 	// This is not a supported generation transition. It deliberately bypasses
 	// the database guard after startup to prove the live read path still fails
 	// closed if the schema is weakened while a worker remains running.
-	if _, err := pool.Exec(ctx, `
-		ALTER TABLE runtime_current_attempts DISABLE TRIGGER runtime_current_attempt_no_mutation;
-		ALTER TABLE runtime_current_attempts DROP CONSTRAINT runtime_current_attempts_generation_check;
-		UPDATE runtime_current_attempts SET generation=2
-		WHERE tenant_id=$1 AND run_id=$2::uuid
-	`, ref.TenantID, ref.RunID); err != nil {
-		t.Fatalf("simulate post-startup generation drift: %v", err)
+	if _, err := pool.Exec(ctx, "ALTER TABLE runtime_current_attempts DISABLE TRIGGER runtime_current_attempt_no_mutation"); err != nil {
+		t.Fatalf("disable fixture immutability trigger: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "ALTER TABLE runtime_current_attempts DROP CONSTRAINT runtime_current_attempts_generation_check"); err != nil {
+		t.Fatalf("weaken fixture generation constraint: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE runtime_current_attempts SET generation=2 WHERE tenant_id=$1 AND run_id=$2::uuid", ref.TenantID, ref.RunID); err != nil {
+		t.Fatalf("persist post-startup generation drift: %v", err)
 	}
 
 	if got, err := store.GetOrCreateTemporalTurn(ctx, ref.TenantID, ref.RunID, ref.WorkflowID, firstTemporalExecutionID, 2); err == nil || got != (run.TemporalTurnIdentity{}) {
