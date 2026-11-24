@@ -27,7 +27,7 @@ func seedBreakerForTransitionTest(t *testing.T, scopeID string) (*testBreakerFix
 }
 
 type testBreakerFixture struct {
-	pool  interface {
+	pool interface {
 		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	}
 	store interface {
