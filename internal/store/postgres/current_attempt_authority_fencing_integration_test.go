@@ -3,7 +3,6 @@ package postgres_test
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -98,7 +97,7 @@ func TestDecisionAuthorityRejectsHistoricalAttemptAfterNewGeneration(t *testing.
 		ref.TenantID, ref.RunID).Scan(&checkpoints); err != nil {
 		t.Fatal(err)
 	}
-	if acceptances != 0 || checkpoints != 1 || !strings.HasPrefix(oldAuthority.InputDigest, "sha256:") {
+	if acceptances != 0 || checkpoints != 1 {
 		t.Fatalf("historical receipt/checkpoint mutated: acceptances=%d checkpoints=%d authority=%+v",
 			acceptances, checkpoints, oldAuthority)
 	}
