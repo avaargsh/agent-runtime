@@ -207,7 +207,6 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		RunAttemptID:        attemptID, TurnID: turnID,
 		InvocationID: invocationID, TurnIndex: turnIndex,
 		AttemptGeneration: attemptGeneration, BreakerEpoch: breakerEpoch,
-		AttemptGeneration: attemptGeneration, BreakerEpoch: breakerEpoch,
 	}
 	if err := identity.Validate(); err != nil {
 		return empty, err
