@@ -288,7 +288,6 @@ func TestTemporalTurnTwoTenantsRevocationFencesRecoveredIdentity(t *testing.T) {
 	}
 }
 
-
 // Until an explicit generation transition is implemented, Temporal Turn
 // binding must reject a current pointer that claims any generation other
 // than one. This fixture simulates privileged catalog drift after startup:
