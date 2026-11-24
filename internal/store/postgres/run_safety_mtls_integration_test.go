@@ -136,8 +136,16 @@ func TestGuardSafetyAuthorityRealMTLSAndPostgreSQL(t *testing.T) {
 		return body
 	}
 	assertStatus(valid, path(accepted.RunID), http.StatusForbidden)
-	if _, err := pool.Exec(ctx, "UPDATE runs SET status='RUNNING',updated_at=clock_timestamp()"); err != nil {
+	if _, err := pool.Exec(ctx,
+		"UPDATE runs SET status='RUNNING',updated_at=clock_timestamp() WHERE run_id=$1::uuid", accepted.RunID); err != nil {
 		t.Fatal(err)
+	}
+	// RUNNING alone is insufficient: the authenticated Guard endpoint
+	// must deny until Runtime commits the matching current Attempt.
+	assertStatus(valid, path(accepted.RunID), http.StatusForbidden)
+	if _, err := store.GetOrCreateTemporalTurn(ctx, accepted.TenantID, accepted.RunID,
+		accepted.WorkflowID, firstTemporalExecutionID, 1); err != nil {
+		t.Fatalf("persist current Attempt before Guard admission: %v", err)
 	}
 	body := assertStatus(valid, path(accepted.RunID), http.StatusOK)
 	var result map[string]any
