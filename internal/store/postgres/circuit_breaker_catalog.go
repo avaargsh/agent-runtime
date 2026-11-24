@@ -6,7 +6,7 @@ import (
 )
 
 // verifyCircuitBreakerTransitionCatalog attests the exact v15 state-machine
-// trigger even on databases where the migration ledger already records v14.
+// trigger even on databases where the migration ledger already records v15.
 // This is a point-in-time startup check, not protection against a privileged
 // owner changing the catalog after startup.
 func verifyCircuitBreakerTransitionCatalog(ctx context.Context, db harnessCatalogReader) error {
