@@ -51,11 +51,13 @@ DECLARE
     run_status TEXT;
     breaker_state TEXT;
     current_breaker_epoch BIGINT;
+    current_breaker_version BIGINT;
+    last_recovery_evidence_ref TEXT;
     current_generation BIGINT;
     previous_breaker_epoch BIGINT;
 BEGIN
-    SELECT r.status, b.state, b.epoch
-      INTO run_status, breaker_state, current_breaker_epoch
+    SELECT r.status, b.state, b.epoch, b.version, b.last_recovery_evidence_ref
+      INTO run_status, breaker_state, current_breaker_epoch, current_breaker_version, last_recovery_evidence_ref
     FROM runs r
     JOIN runtime_circuit_breakers b
       ON b.scope_kind = 'RUN' AND b.scope_id = r.run_id::text
@@ -76,11 +78,15 @@ BEGIN
     IF NEW.generation <> current_generation + 1 THEN
         RAISE EXCEPTION 'Runtime Attempt authority generation must be contiguous';
     END IF;
-    IF current_generation = 0 AND NEW.breaker_epoch <> 1 THEN
-        RAISE EXCEPTION 'initial Runtime Attempt authority must use breaker epoch 1';
+    IF current_generation = 0 AND (NEW.breaker_epoch <> 1 OR current_breaker_version <> 1) THEN
+        RAISE EXCEPTION 'initial Runtime Attempt authority must use breaker epoch/version 1';
     END IF;
-    IF current_generation > 0 AND NEW.breaker_epoch <= previous_breaker_epoch THEN
-        RAISE EXCEPTION 'Runtime Attempt authority generation requires a newer breaker epoch';
+    IF current_generation > 0 AND (
+        NEW.breaker_epoch < previous_breaker_epoch + 3
+        OR last_recovery_evidence_ref IS NULL
+        OR last_recovery_evidence_ref = ''
+    ) THEN
+        RAISE EXCEPTION 'Runtime Attempt authority generation requires a completed, evidenced breaker recovery';
     END IF;
 
     RETURN NEW;
