@@ -98,3 +98,57 @@ func (s *Store) GetTrustedGuardExecutionAuthority(
 	}
 	return result, nil
 }
+
+var ErrGuardAuthorityDBRoleNotReadOnly = errors.New("Guard authority database role is not least-privilege read-only")
+
+// VerifyGuardExecutionAuthorityReadOnlyRole fails startup unless the current
+// database identity can SELECT the exact authority relations and cannot
+// mutate them, create objects in the schema/database, or elevate through role
+// membership. default_transaction_read_only is defense in depth, not the
+// authorization boundary.
+func (s *Store) VerifyGuardExecutionAuthorityReadOnlyRole(ctx context.Context) error {
+	if s == nil || s.pool == nil || ctx == nil {
+		return ErrGuardAuthorityDBRoleNotReadOnly
+	}
+	var valid bool
+	err := s.pool.QueryRow(ctx, `
+		WITH required(relname) AS (
+			VALUES
+				('runs'),
+				('runtime_run_principal_snapshots'),
+				('runtime_run_attempts'),
+				('runtime_current_attempts'),
+				('runtime_decision_turns'),
+				('runtime_circuit_breakers')
+		)
+		SELECT
+			current_setting('default_transaction_read_only')='on'
+			AND current_schema() IS NOT NULL
+			AND NOT has_schema_privilege(current_user,current_schema(),'CREATE')
+			AND NOT has_database_privilege(current_user,current_database(),'CREATE')
+			AND NOT EXISTS (
+				SELECT 1 FROM pg_roles role
+				WHERE role.rolname=current_user
+				  AND (role.rolsuper OR role.rolcreatedb OR role.rolcreaterole OR role.rolreplication OR role.rolbypassrls)
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM pg_auth_members membership
+				WHERE membership.member=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+			)
+			AND count(*)=6
+			AND bool_and(
+				has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'SELECT')
+				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'INSERT')
+				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'UPDATE')
+				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'DELETE')
+				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'TRUNCATE')
+				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'REFERENCES')
+				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'TRIGGER')
+			)
+		FROM required
+	`).Scan(&valid)
+	if err != nil || !valid {
+		return ErrGuardAuthorityDBRoleNotReadOnly
+	}
+	return nil
+}

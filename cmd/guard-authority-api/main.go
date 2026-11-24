@@ -99,7 +99,14 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return errors.New("Guard authority database unavailable")
 	}
-	handler, err := acphttp.NewGuardExecutionAuthorityHandler(postgres.New(pool), c.peer, c.tenant)
+	store := postgres.New(pool)
+	verifyCtx, cancelVerify := context.WithTimeout(ctx, 5*time.Second)
+	err = store.VerifyGuardExecutionAuthorityReadOnlyRole(verifyCtx)
+	cancelVerify()
+	if err != nil {
+		return fmt.Errorf("verify Guard authority database role: %w", err)
+	}
+	handler, err := acphttp.NewGuardExecutionAuthorityHandler(store, c.peer, c.tenant)
 	if err != nil {
 		return err
 	}
