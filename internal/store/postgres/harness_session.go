@@ -19,6 +19,9 @@ import (
 // Its presence never authorizes any Agent tool, terminal or EngageGuard effect.
 // Initial creation requires a locked CLOSED Run breaker at the initial epoch;
 // later epochs need an explicit continuation contract, not silent reuse.
+// Until fenced continuation exists, another persisted Attempt denies admission.
+// This snapshot check is not a fence against privileged out-of-band writes;
+// supported Attempt creation serializes on the same canonical Run row.
 func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim) (acp.SessionClaimRecord, error) {
 	if s == nil || s.pool == nil {
 		return acp.SessionClaimRecord{}, run.ErrRepositoryUnavailable
@@ -50,6 +53,12 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 			AND r.agent_release_id = $5 AND r.source_request_digest = $7
 			AND r.status = 'RUNNING'
 			AND b.state='CLOSED' AND b.epoch=1 AND b.version>=1
+			AND NOT EXISTS (
+				SELECT 1 FROM %s AS other_attempt
+				WHERE other_attempt.tenant_id=r.tenant_id
+					AND other_attempt.run_id=r.run_id
+					AND other_attempt.run_attempt_id<>a.run_attempt_id
+			)
 			AND EXISTS (
 				SELECT 1 FROM %s AS p
 				WHERE p.tenant_id=r.tenant_id AND p.run_id=r.run_id
@@ -59,7 +68,7 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 		FOR SHARE OF r,a,b
 		ON CONFLICT (tenant_id, run_id) DO NOTHING
 		RETURNING run_id::text
-	`, claimTable, runTable, attemptTable, relations.breakers, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, attemptTable, relations.breakers, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&insertedRunID)
 	if err == nil {
 		return acp.SessionClaimRecord{SessionClaim: claim, State: acp.ClaimPrepared, Created: true}, nil
@@ -130,6 +139,7 @@ func (s *Store) ReadHarnessSessionClaim(ctx context.Context, claim acp.SessionCl
 // Only a matching persisted ACP principal/policy and the caller receiving
 // (true, nil) may call session/new once. This second check locks the same
 // RUN breaker so a revocation committed before dispatch cannot be bypassed.
+// Recheck unique persisted Attempt authority before consuming the claim.
 func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.SessionClaim) (bool, error) {
 	if s == nil || s.pool == nil {
 		return false, run.ErrRepositoryUnavailable
@@ -162,6 +172,12 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 				AND r.run_id=c.run_id AND r.agent_release_id=c.agent_release_id
 				AND r.source_request_digest=c.request_digest AND r.status='RUNNING'
 				AND b.state='CLOSED' AND b.epoch=1 AND b.version>=1
+				AND NOT EXISTS (
+					SELECT 1 FROM %s AS other_attempt
+					WHERE other_attempt.tenant_id=r.tenant_id
+						AND other_attempt.run_id=r.run_id
+						AND other_attempt.run_attempt_id<>a.run_attempt_id
+				)
 				AND EXISTS (
 					SELECT 1 FROM %s AS p
 					WHERE p.tenant_id=r.tenant_id AND p.run_id=r.run_id
@@ -170,7 +186,7 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 				)
 				FOR SHARE OF r,a,b)
 		RETURNING c.run_id::text
-	`, claimTable, runTable, attemptTable, relations.breakers, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, attemptTable, relations.breakers, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&runID)
 	if err == nil {
 		return true, nil
