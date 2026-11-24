@@ -24,7 +24,7 @@ The dedicated process reads:
 - `RUNTIME_GUARD_AUTHORITY_TLS_CERT`, `RUNTIME_GUARD_AUTHORITY_TLS_KEY`, `RUNTIME_GUARD_AUTHORITY_CLIENT_CA`: TLS 1.3 server certificate and client trust roots.
 - `RUNTIME_GUARD_AUTHORITY_PEER_SPIFFE_ID`: one exact Guard workload SPIFFE URI.
 - `RUNTIME_GUARD_AUTHORITY_TENANT`: one explicitly provisioned tenant.
-- `RUNTIME_GUARD_AUTHORITY_LISTEN_ADDR`: optional listener address; defaults to `127.0.0.1:8446`.
+- `RUNTIME_GUARD_AUTHORITY_LISTEN_ADDR`: optional listener address; defaults to `:8446` (all pod interfaces).
 
 The process sets `default_transaction_read_only=on` and does not run migrations. This is defense in depth, not a substitute for a database role that lacks INSERT/UPDATE/DELETE/TRUNCATE/DDL privileges. Do not reuse the ACP or Decision database credentials.
 
