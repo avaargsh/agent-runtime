@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/avaargsh/agent-runtime/internal/breaker"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestCircuitBreakerRejectsStateOnlyTransitionAtDatabaseBoundary(t *testing.T) {
@@ -42,5 +43,74 @@ func TestCircuitBreakerRejectsStateOnlyTransitionAtDatabaseBoundary(t *testing.T
 	}
 	if persisted.State != breaker.StateClosed || persisted.Epoch != 1 || persisted.Version != 1 {
 		t.Fatalf("rejected transition mutated durable breaker: %+v", persisted)
+	}
+
+	// Even a correctly incremented tuple cannot skip the OPEN admission step.
+	_, err = pool.Exec(ctx, `
+		UPDATE runtime_circuit_breakers
+		SET state='HALF_OPEN', epoch=2, version=2,
+			reason_code='RECOVERY_IN_PROGRESS',
+			trigger_event_id='event-illegal-jump',
+			opened_at=clock_timestamp(),
+			recovery_approval_id='approval-illegal-jump',
+			updated_at=clock_timestamp()
+		WHERE scope_kind='RUN' AND scope_id=$1
+	`, scope.ID)
+	if err == nil {
+		t.Fatal("database accepted unsupported CLOSED to HALF_OPEN transition")
+	}
+
+	// All supported state-machine transitions still pass through the DB fence.
+	opened, err := initial.Trip("UNAUTHORIZED_EGRESS", "event-supported-open", initial.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, initial.Version, opened); err != nil {
+		t.Fatalf("supported CLOSED to OPEN transition rejected: %v", err)
+	}
+	halfOpen, err := opened.BeginRecovery("approval-supported", opened.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, opened.Version, halfOpen); err != nil {
+		t.Fatalf("supported OPEN to HALF_OPEN transition rejected: %v", err)
+	}
+	recovered, err := halfOpen.CompleteRecovery("approval-supported", "evidence://breaker/recovery", halfOpen.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, halfOpen.Version, recovered); err != nil {
+		t.Fatalf("supported HALF_OPEN to CLOSED transition rejected: %v", err)
+	}
+	if final, err := store.GetBreaker(ctx, scope); err != nil ||
+		final.State != breaker.StateClosed || final.Epoch != 4 || final.Version != 4 {
+		t.Fatalf("supported recovery did not persist: %+v err=%v", final, err)
+	}
+}
+
+type breakerTransitionTestDB interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// disableBreakerTransitionTrigger simulates a privileged database owner
+// corrupting a row, so consumer fail-closed tests continue to exercise that
+// separate defense after ordinary application DML is fenced.
+func disableBreakerTransitionTrigger(t *testing.T, db breakerTransitionTestDB) {
+	t.Helper()
+	if _, err := db.Exec(context.Background(), `ALTER TABLE runtime_circuit_breakers DISABLE TRIGGER runtime_circuit_breaker_transition`); err != nil {
+		t.Fatalf("disable breaker transition trigger for privileged fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.Exec(context.Background(), `ALTER TABLE runtime_circuit_breakers ENABLE ALWAYS TRIGGER runtime_circuit_breaker_transition`); err != nil {
+			t.Errorf("restore breaker transition trigger: %v", err)
+		}
+	})
+}
+
+func TestCircuitBreakerTransitionCatalogRejectsDisabledTrigger(t *testing.T) {
+	pool, store := newTestStore(t)
+	disableBreakerTransitionTrigger(t, pool)
+	if err := store.Migrate(context.Background()); err == nil {
+		t.Fatal("Runtime startup/migration accepted a disabled breaker transition trigger")
 	}
 }
