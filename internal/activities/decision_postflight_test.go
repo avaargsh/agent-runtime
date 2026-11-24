@@ -174,3 +174,39 @@ func TestInvokeDecisionRejectsBreakerVersionDriftBeforeFirstPoll(t *testing.T) {
 		t.Fatalf("breaker state checked only %d time(s), want preflight and postflight", calls)
 	}
 }
+
+
+// The generation-one Turn was admitted only while the RUN breaker was CLOSED.
+// A direct state-only catalog drift to HALF_OPEN can preserve epoch/version 1;
+// Record.Check intentionally allows read-only probes in HALF_OPEN, but that
+// must not let this already-bound Turn masquerade as a newly admitted probe.
+func TestInvokeDecisionRejectsHalfOpenStateWithoutNewBreakerFence(t *testing.T) {
+	halfOpen := closedRunBreaker(t)
+	halfOpen.State = breaker.StateHalfOpen
+	halfOpen.ReasonCode = "RECOVERY_IN_PROGRESS"
+	halfOpen.TriggerEventID = "event-state-only-drift"
+	halfOpen.OpenedAt = halfOpen.UpdatedAt
+	halfOpen.RecoveryApprovalID = "approval-state-only-drift"
+	halfOpen.UpdatedAt = halfOpen.UpdatedAt.Add(time.Second)
+	if err := halfOpen.Validate(); err != nil {
+		t.Fatalf("invalid state-only drift fixture: %v", err)
+	}
+	if halfOpen.Epoch != 1 || halfOpen.Version != 1 {
+		t.Fatalf("fixture unexpectedly advanced breaker fence: %+v", halfOpen)
+	}
+
+	store := &fakeBreakerStore{records: []breaker.Record{halfOpen}}
+	client := &immediateDecisionInvoker{}
+	activity := Activities{
+		Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
+	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
+		t.Fatal("old CLOSED-bound Turn was accepted as a HALF_OPEN read-only probe without a new authority")
+	}
+	if client.calls != 0 || store.callCount() != 1 {
+		t.Fatalf("state-drifted Turn reached Decision egress or performed extra reads: client=%d breaker_reads=%d",
+			client.calls, store.callCount())
+	}
+}
