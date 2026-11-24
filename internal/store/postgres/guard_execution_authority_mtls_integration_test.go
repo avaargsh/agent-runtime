@@ -34,6 +34,9 @@ func TestGuardExecutionAuthorityRealMTLSAndPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := acphttp.NewGuardExecutionAuthorityHandler(store, peer, string([]byte{0xff})); err == nil {
+		t.Fatal("invalid UTF-8 tenant configuration accepted")
+	}
 
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
