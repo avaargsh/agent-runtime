@@ -55,26 +55,40 @@ func (s *Store) guardRunSnapshot(ctx context.Context, tenantID, runID string, re
 		schema = "public"
 	}
 	breakers := pgx.Identifier{schema, "runtime_circuit_breakers"}.Sanitize()
+	// The trusted Guard read must check current Attempt authority in the
+	// same MVCC statement as the Run/breaker. Keep the legacy diagnostic
+	// projection independent of the v13 Attempt pointer.
+	currentColumns := "NULL::bigint, NULL::bigint"
+	currentJoin := ""
+	if requirePrincipal {
+		current := pgx.Identifier{schema, "runtime_current_attempts"}.Sanitize()
+		currentColumns = "current_attempt.generation, current_attempt.breaker_epoch"
+		currentJoin = fmt.Sprintf(`LEFT JOIN %s current_attempt
+			ON current_attempt.tenant_id=r.tenant_id AND current_attempt.run_id=r.run_id`, current)
+	}
 	var workflowID string
 	var acpBound, principalBound bool
 	var breakerState pgtype.Text
 	var breakerEpoch, breakerVersion pgtype.Int8
+	var attemptGeneration, attemptBreakerEpoch pgtype.Int8
 	err = s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT r.run_id::text, r.tenant_id, r.agent_id,
 			r.agent_release_id, r.session_id, r.workflow_id,
 			(r.run_intent_id IS NOT NULL), r.status,
 			(p.run_id IS NOT NULL AND p.snapshot_version='acp-principal/v1'),
-			b.state, b.epoch, b.version
+			b.state, b.epoch, b.version, %s
 		FROM %s r
 		LEFT JOIN %s p ON p.tenant_id=r.tenant_id AND p.run_id=r.run_id
 		LEFT JOIN %s b
 		  ON b.scope_kind='RUN' AND b.scope_id=r.run_id::text
+		%s
 		WHERE r.tenant_id=$1 AND r.run_id=$2::uuid
-	`, runs, principals, breakers), tenantID, canonical.String()).Scan(
+	`, currentColumns, runs, principals, breakers, currentJoin), tenantID, canonical.String()).Scan(
 		&result.Identity.RunID, &result.Identity.TenantID,
 		&result.Identity.AgentID, &result.Identity.AgentReleaseID,
 		&result.Identity.SessionID, &workflowID, &acpBound, &result.Status, &principalBound,
 		&breakerState, &breakerEpoch, &breakerVersion,
+		&attemptGeneration, &attemptBreakerEpoch,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run.GuardRunSafetySnapshot{}, run.ErrRunNotFound
@@ -114,6 +128,14 @@ func (s *Store) guardRunSnapshot(ctx context.Context, tenantID, runID string, re
 	case "CLOSED", "OPEN", "HALF_OPEN":
 	default:
 		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: %w: unrecognized Run breaker state", run.ErrInvalidIdentity, ErrBreakerNotFound)
+	}
+	// The v1 Guard wire response does not carry Attempt generation, so
+	// absence or recovery to a newer epoch must fail closed before a
+	// RUNNING safety snapshot reaches Guard. No remote fencing is claimed.
+	if requirePrincipal && result.Status == run.StatusRunning &&
+		(!attemptGeneration.Valid || attemptGeneration.Int64 != 1 ||
+			!attemptBreakerEpoch.Valid || attemptBreakerEpoch.Int64 != breakerEpoch.Int64) {
+		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: missing or stale current Attempt authority", run.ErrInvalidIdentity)
 	}
 	result.BreakerState = breakerState.String
 	result.BreakerEpoch = uint64(breakerEpoch.Int64)
