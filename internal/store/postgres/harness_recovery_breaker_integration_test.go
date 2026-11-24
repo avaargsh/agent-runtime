@@ -89,3 +89,60 @@ func TestHarnessRecoveryDeniesRevokedBreakerPreservesHistory(t *testing.T) {
 	}
 	check("missing breaker")
 }
+
+
+// A confirmed historical Harness binding remains available for cancellation,
+// but it cannot be loaded as a current session after its generation-one
+// pointer is absent. The v13 migration deliberately does not backfill it.
+func TestHarnessRecoveryRequiresCurrentAttemptPointerPreservesCancel(t *testing.T) {
+	pool, store, claim := harnessFixture(t)
+	ctx := context.Background()
+	if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); !ok || err != nil {
+		t.Fatalf("initial dispatch: %t %v", ok, err)
+	}
+	const session = "historical-pointer-session"
+	confirmed, err := store.ConfirmHarnessSession(ctx, claim, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a v12 database whose historical Attempt predates the pointer.
+	if _, err := pool.Exec(ctx, `DROP TABLE runtime_current_attempts;
+		DELETE FROM runtime_schema_migrations WHERE version=13`); err != nil {
+		t.Fatal(err)
+	}
+	restarted := postgres.New(pool)
+	if err := restarted.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := restarted.LookupBinding(ctx, claim.TenantID, claim.RunID)
+	if err != nil || !binding.Confirmed || binding.RecoveryEligible {
+		t.Fatalf("legacy binding gained current recovery authority: %+v %v", binding, err)
+	}
+
+	rpc := &durableHarnessRPCProbe{}
+	client, err := acp.NewClient(rpc, restarted, claim.HarnessInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := client.Recover(ctx, claim.TenantID, claim.RunID); status != acp.RecoveryUnknown || !errors.Is(err, acp.ErrBindingInvalid) {
+		t.Fatalf("legacy pointer-less session loaded: %s %v", status, err)
+	}
+	if !reflect.DeepEqual(rpc.methods, []string{"initialize"}) {
+		t.Fatalf("pointer-less recovery emitted session/load: %v", rpc.methods)
+	}
+	got, err := restarted.ReadHarnessSessionClaim(ctx, claim)
+	if err != nil || got != confirmed {
+		t.Fatalf("historical receipt changed: %+v %v", got, err)
+	}
+	if status, err := client.Cancel(ctx, claim.TenantID, claim.RunID); status != acp.CancelSent || err != nil ||
+		!reflect.DeepEqual(rpc.notifications, []string{"session/cancel"}) || rpc.cancelSession != session {
+		t.Fatalf("historical cancellation lost: %s %v", status, err)
+	}
+}
