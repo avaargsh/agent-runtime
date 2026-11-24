@@ -413,17 +413,20 @@ func (s *StreamRPC) handleAgentReply(message streamEnvelope) error {
 	}
 	reply := streamReply{result: message.Result}
 	if len(message.Error) > 0 && string(message.Error) != "null" {
-		var rpcError struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		}
-		if err := json.Unmarshal(message.Error, &rpcError); err != nil {
+		// Require exact, present, non-null code and message fields.
+		// Struct decoding accepts missing/null fields and case-folded aliases.
+		var rpcError map[string]json.RawMessage
+		var code *int
+		var errorMessage *string
+		if err := json.Unmarshal(message.Error, &rpcError); err != nil ||
+			json.Unmarshal(rpcError["code"], &code) != nil || code == nil ||
+			json.Unmarshal(rpcError["message"], &errorMessage) != nil || errorMessage == nil {
 			return fmt.Errorf("%w: malformed Agent RPC error", ErrRPCStreamClosed)
 		}
 		// The Agent controls error.message. Never propagate it into Runtime
 		// errors, logs or audit trails; the numeric JSON-RPC code suffices
 		// for bounded diagnostics without log injection or secret disclosure.
-		reply.err = fmt.Errorf("ACP method failed (JSON-RPC %d; Agent message redacted)", rpcError.Code)
+		reply.err = fmt.Errorf("ACP method failed (JSON-RPC %d; Agent message redacted)", *code)
 	}
 	s.mu.Lock()
 	pending := s.pending[id]
