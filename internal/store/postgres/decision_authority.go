@@ -70,6 +70,10 @@ func readDecisionAuthority(ctx context.Context, q checkpointQueryer, rel checkpo
 		  AND aa.generation=1 AND aa.breaker_epoch=b.epoch
 		WHERE r.tenant_id=$1 AND r.run_id=$2::uuid AND t.invocation_id=$3::uuid
 		  AND r.status='RUNNING' AND b.state='CLOSED'
+		  -- No explicit generation transition exists: all v13 current
+		  -- Attempts require the original RUN breaker version. Match the
+		  -- Temporal Turn and trusted Guard admission fences.
+		  AND b.version=1
 		  AND c.phase='WAITING_AUTHORITY' AND p.actor_id=p.subject_id
 		  AND NOT EXISTS (
 		    SELECT 1 FROM %s AS other_attempt
