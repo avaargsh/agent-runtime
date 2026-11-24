@@ -58,11 +58,18 @@ func (s *Store) guardRunSnapshot(ctx context.Context, tenantID, runID string, re
 	// The trusted Guard read must check current Attempt authority in the
 	// same MVCC statement as the Run/breaker. Keep the legacy diagnostic
 	// projection independent of the v13 Attempt pointer.
-	currentColumns := "NULL::bigint, NULL::bigint"
+	currentColumns := "NULL::bigint, NULL::bigint, FALSE"
 	currentJoin := ""
 	if requirePrincipal {
 		current := pgx.Identifier{schema, "runtime_current_attempts"}.Sanitize()
-		currentColumns = "current_attempt.generation, current_attempt.breaker_epoch"
+		attempts := pgx.Identifier{schema, "runtime_run_attempts"}.Sanitize()
+		// Generation-one authority must be unambiguous. V8 permits
+		// additional immutable historical Attempts; while transition is
+		// disabled, any second Attempt blocks new Guard admission.
+		currentColumns = fmt.Sprintf(`current_attempt.generation, current_attempt.breaker_epoch,
+			EXISTS (SELECT 1 FROM %s other_attempt
+				WHERE other_attempt.tenant_id=r.tenant_id AND other_attempt.run_id=r.run_id
+				  AND other_attempt.run_attempt_id<>current_attempt.attempt_id)`, attempts)
 		currentJoin = fmt.Sprintf(`LEFT JOIN %s current_attempt
 			ON current_attempt.tenant_id=r.tenant_id AND current_attempt.run_id=r.run_id`, current)
 	}
@@ -71,6 +78,7 @@ func (s *Store) guardRunSnapshot(ctx context.Context, tenantID, runID string, re
 	var breakerState pgtype.Text
 	var breakerEpoch, breakerVersion pgtype.Int8
 	var attemptGeneration, attemptBreakerEpoch pgtype.Int8
+	var ambiguousAttempt bool
 	err = s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT r.run_id::text, r.tenant_id, r.agent_id,
 			r.agent_release_id, r.session_id, r.workflow_id,
@@ -88,7 +96,7 @@ func (s *Store) guardRunSnapshot(ctx context.Context, tenantID, runID string, re
 		&result.Identity.AgentID, &result.Identity.AgentReleaseID,
 		&result.Identity.SessionID, &workflowID, &acpBound, &result.Status, &principalBound,
 		&breakerState, &breakerEpoch, &breakerVersion,
-		&attemptGeneration, &attemptBreakerEpoch,
+		&attemptGeneration, &attemptBreakerEpoch, &ambiguousAttempt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return run.GuardRunSafetySnapshot{}, run.ErrRunNotFound
@@ -130,11 +138,12 @@ func (s *Store) guardRunSnapshot(ctx context.Context, tenantID, runID string, re
 		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: %w: unrecognized Run breaker state", run.ErrInvalidIdentity, ErrBreakerNotFound)
 	}
 	// The v1 Guard wire response does not carry Attempt generation, so
-	// absence or recovery to a newer epoch must fail closed before a
+	// absence, ambiguous Attempts or recovery to a newer epoch must fail closed before a
 	// RUNNING safety snapshot reaches Guard. No remote fencing is claimed.
 	if requirePrincipal && result.Status == run.StatusRunning &&
 		(!attemptGeneration.Valid || attemptGeneration.Int64 != 1 ||
-			!attemptBreakerEpoch.Valid || attemptBreakerEpoch.Int64 != breakerEpoch.Int64) {
+			!attemptBreakerEpoch.Valid || attemptBreakerEpoch.Int64 != breakerEpoch.Int64 ||
+			ambiguousAttempt) {
 		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: missing or stale current Attempt authority", run.ErrInvalidIdentity)
 	}
 	result.BreakerState = breakerState.String
