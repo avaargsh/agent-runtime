@@ -110,6 +110,9 @@ func (s *Store) VerifyGuardExecutionAuthorityReadOnlyRole(ctx context.Context) e
 	if s == nil || s.pool == nil || ctx == nil {
 		return ErrGuardAuthorityDBRoleNotReadOnly
 	}
+	if _, _, _, _, err := s.harnessRelations(); err != nil {
+		return ErrGuardAuthorityDBRoleNotReadOnly
+	}
 	var valid bool
 	err := s.pool.QueryRow(ctx, `
 		WITH required(relname) AS (

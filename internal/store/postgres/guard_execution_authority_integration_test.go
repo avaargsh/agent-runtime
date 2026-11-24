@@ -211,6 +211,16 @@ func TestGuardExecutionAuthorityWorksWithSelectOnlyDatabaseRole(t *testing.T) {
 	if err := readOnlyStore.VerifyGuardExecutionAuthorityReadOnlyRole(ctx); err != nil {
 		t.Fatalf("SELECT-only Guard role rejected: %v", err)
 	}
+	invalidSchemaConfig := readOnlyPool.Config().Copy()
+	invalidSchemaConfig.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+	invalidSchemaPool, err := pgxpool.NewWithConfig(ctx, invalidSchemaConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.New(invalidSchemaPool).VerifyGuardExecutionAuthorityReadOnlyRole(ctx); !errors.Is(err, postgres.ErrGuardAuthorityDBRoleNotReadOnly) {
+		t.Fatalf("ambiguous multi-schema search_path accepted: %v", err)
+	}
+	invalidSchemaPool.Close()
 	got, err := readOnlyStore.GetTrustedGuardExecutionAuthority(ctx, receipt.TenantID, receipt.RunID, turn.TurnID)
 	if err != nil || got.RunAttemptID == "" || got.TurnID != turn.TurnID {
 		t.Fatalf("SELECT-only role could not read Guard authority: %+v err=%v", got, err)
