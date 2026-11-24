@@ -248,6 +248,12 @@ func nonRetryableRunIdentityError(cause error) error {
 // epoch. Version one is the only enabled breaker contract for generation-one
 // Attempts; a future recovery flow must create an explicit new authority.
 func checkBoundRunBreaker(record breaker.Record, expectedEpoch uint64) error {
+	// This Activity only consumes Turns admitted under a CLOSED generation-one
+	// breaker. HALF_OPEN read-only probes require a separately admitted Turn;
+	// the existing CLOSED-bound Turn cannot be reused as that probe.
+	if record.State != breaker.StateClosed {
+		return fmt.Errorf("Run breaker state changed after Temporal Turn binding: got %s, want CLOSED", record.State)
+	}
 	if record.Version != 1 {
 		return fmt.Errorf("Run breaker version changed after Temporal Turn binding: got %d, want 1", record.Version)
 	}
