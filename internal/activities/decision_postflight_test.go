@@ -90,3 +90,87 @@ func TestInvokeDecisionFailsClosedWhenPostInvocationBreakerReadFails(t *testing.
 		t.Fatalf("post-invocation breaker read outage accepted, got %v (want RUN_BREAKER_BLOCKED)", err)
 	}
 }
+
+// The persisted Temporal Turn is bound to breaker epoch/version one. A later
+// recovery must not silently rebase that stale Turn onto the new breaker
+// epoch, even though HALF_OPEN permits read-only probes in a newly admitted
+// recovery flow. Until an explicit epoch-bound continuation exists, the
+// original Turn loses authority on every breaker transition.
+func TestInvokeDecisionRejectsBreakerRecoveryForStaleTemporalTurn(t *testing.T) {
+	closed := closedRunBreaker(t)
+	opened, err := closed.Trip("UNAUTHORIZED_EGRESS", "event-stale-turn", closed.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := opened.BeginRecovery("approval-stale-turn", opened.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.State != breaker.StateHalfOpen || recovered.Epoch == uint64(temporalTestTurnIdentity().BreakerEpoch) {
+		t.Fatalf("fixture did not advance breaker beyond the bound Turn: %+v", recovered)
+	}
+
+	store := &fakeBreakerStore{records: []breaker.Record{recovered}}
+	client := &immediateDecisionInvoker{}
+	activity := Activities{
+		Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
+	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
+		t.Fatal("stale epoch-one Turn was silently reauthorized by the newer HALF_OPEN breaker epoch")
+	}
+	if client.calls != 0 || store.callCount() != 1 {
+		t.Fatalf("stale Turn reached Decision egress or performed extra reads: client=%d breaker_reads=%d",
+			client.calls, store.callCount())
+	}
+}
+
+// A privileged version-only catalog drift is also outside the generation-one
+// contract. Record.Check validates state/epoch but does not bind version;
+// the Activity must preserve the version-one fence established at Turn bind.
+func TestInvokeDecisionRejectsBreakerVersionDriftAfterTemporalTurnBinding(t *testing.T) {
+	drifted := closedRunBreaker(t)
+	drifted.Version = 2
+
+	store := &fakeBreakerStore{records: []breaker.Record{drifted}}
+	client := &immediateDecisionInvoker{}
+	activity := Activities{
+		Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+	}
+	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
+		t.Fatal("epoch-one Turn was accepted after breaker version drift")
+	}
+	if client.calls != 0 || store.callCount() != 1 {
+		t.Fatalf("version-drifted Turn reached Decision egress or performed extra reads: client=%d breaker_reads=%d",
+			client.calls, store.callCount())
+	}
+}
+
+// The breaker may change after preflight but before a fast Decision response,
+// beating the periodic watcher. The postflight read must still be pinned to
+// the persisted Turn's original version and reject the returned result.
+func TestInvokeDecisionRejectsBreakerVersionDriftBeforeFirstPoll(t *testing.T) {
+	closed := closedRunBreaker(t)
+	drifted := closed
+	drifted.Version = 2
+	store := &fakeBreakerStore{records: []breaker.Record{closed}}
+	activity := Activities{
+		Breakers: store,
+		Client:   flipBreakerBeforeReturn{store: store, next: drifted},
+		Runs:     testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+		PollInterval:  time.Hour,
+	}
+	_, err := activity.InvokeDecision(context.Background(), activityTurn())
+	var appErr *temporal.ApplicationError
+	if !errors.As(err, &appErr) || appErr.Type() != "RUN_BREAKER_BLOCKED" || !appErr.NonRetryable() {
+		t.Fatalf("post-preflight breaker version drift accepted, got %v (want non-retryable RUN_BREAKER_BLOCKED)", err)
+	}
+	if calls := store.callCount(); calls < 2 {
+		t.Fatalf("breaker state checked only %d time(s), want preflight and postflight", calls)
+	}
+}

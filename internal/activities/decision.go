@@ -132,8 +132,8 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 	if err != nil {
 		return empty, nonRetryableBreakerError(fmt.Errorf("load Run breaker before Decision egress: %w", err))
 	}
-	expectedEpoch := initial.Epoch
-	if err := initial.Check(expectedEpoch, breaker.EffectReadOnly); err != nil {
+	expectedEpoch := uint64(temporalTurn.BreakerEpoch)
+	if err := checkBoundRunBreaker(initial, expectedEpoch); err != nil {
 		return empty, nonRetryableBreakerError(err)
 	}
 
@@ -167,7 +167,7 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 					cancelRequest()
 					return
 				}
-				if err := current.Check(expectedEpoch, breaker.EffectReadOnly); err != nil {
+				if err := checkBoundRunBreaker(current, expectedEpoch); err != nil {
 					select {
 					case breakerErrors <- err:
 					default:
@@ -198,7 +198,7 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 	if err != nil {
 		return empty, nonRetryableBreakerError(fmt.Errorf("load Run breaker after Decision egress: %w", err))
 	}
-	if err := postflight.Check(expectedEpoch, breaker.EffectReadOnly); err != nil {
+	if err := checkBoundRunBreaker(postflight, expectedEpoch); err != nil {
 		return empty, nonRetryableBreakerError(err)
 	}
 	if invokeErr != nil {
@@ -240,4 +240,16 @@ func nonRetryableRunIdentityError(cause error) error {
 		"RUN_IDENTITY_MISMATCH",
 		cause,
 	)
+}
+
+// checkBoundRunBreaker keeps every preflight, in-flight and postflight read
+// pinned to the breaker fence captured in the persisted Temporal Turn. A
+// fresh breaker read must never rebase an old Turn onto a newer recovery
+// epoch. Version one is the only enabled breaker contract for generation-one
+// Attempts; a future recovery flow must create an explicit new authority.
+func checkBoundRunBreaker(record breaker.Record, expectedEpoch uint64) error {
+	if record.Version != 1 {
+		return fmt.Errorf("Run breaker version changed after Temporal Turn binding: got %d, want 1", record.Version)
+	}
+	return record.Check(expectedEpoch, breaker.EffectReadOnly)
 }
