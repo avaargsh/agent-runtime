@@ -6,14 +6,16 @@ import (
 	"time"
 
 	"github.com/avaargsh/agent-runtime/internal/run"
+	"github.com/avaargsh/agent-runtime/internal/store/postgres"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func authorityMigrationIntent() run.IntentStartRequest {
 	return testIntent()
 }
 
-func acceptAuthorityMigrationRun(t *testing.T, store *postgres.Store, intentID string) run.AcceptedIntentReceipt {
+func acceptAuthorityMigrationRun(t *testing.T, store *postgres.Store, intentID string) run.IntentReceipt {
 	t.Helper()
 	intent := authorityMigrationIntent()
 	intent.RunIntentID = intentID
@@ -24,7 +26,7 @@ func acceptAuthorityMigrationRun(t *testing.T, store *postgres.Store, intentID s
 	return receipt
 }
 
-func seedAuthorityMigrationAttempt(t *testing.T, pool *pgxpool.Pool, receipt run.AcceptedIntentReceipt, executionID string) {
+func seedAuthorityMigrationAttempt(t *testing.T, pool *pgxpool.Pool, receipt run.IntentReceipt, executionID string) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO runtime_run_attempts
@@ -102,7 +104,7 @@ func TestCurrentAttemptAuthorityMigrationBackfillsOnlyUnambiguousInitialAttempts
 		t.Fatalf("wrong backfilled authority: generation=%d attempt=%s execution=%s epoch=%d", generation, attemptID, executionID, breakerEpoch)
 	}
 
-	for name, receipt := range map[string]run.AcceptedIntentReceipt{
+	for name, receipt := range map[string]run.IntentReceipt{
 		"ambiguous": ambiguous, "revoked": revoked, "terminal": terminal, "missing-breaker": missingBreaker,
 	} {
 		var count int
@@ -185,5 +187,4 @@ func TestCurrentAttemptAuthorityLedgerIsImmutableAndGenerationFenced(t *testing.
 	if count != 1 {
 		t.Fatalf("rejected generation advanced ledger: rows=%d", count)
 	}
-	_ = time.Second
 }
