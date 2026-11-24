@@ -107,7 +107,7 @@ func TestInvokeDecisionRejectsBreakerRecoveryForStaleTemporalTurn(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recovered.State != breaker.StateHalfOpen || recovered.Epoch == temporalTestTurnIdentity().BreakerEpoch {
+	if recovered.State != breaker.StateHalfOpen || recovered.Epoch == uint64(temporalTestTurnIdentity().BreakerEpoch) {
 		t.Fatalf("fixture did not advance breaker beyond the bound Turn: %+v", recovered)
 	}
 
