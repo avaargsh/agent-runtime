@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	ErrTemporalTurnUntrustedRun       = errors.New("Runtime Run is not bound to an immutable ACP principal")
-	ErrTemporalExecutionConflict      = errors.New("different Temporal execution attempted to own an existing Runtime Run")
+	ErrTemporalTurnUntrustedRun        = errors.New("Runtime Run is not bound to an immutable ACP principal")
+	ErrTemporalExecutionConflict       = errors.New("different Temporal execution attempted to own an existing Runtime Run")
 	ErrTemporalAttemptAuthorityMissing = errors.New("Runtime Temporal Attempt has no current authority generation")
 )
 
