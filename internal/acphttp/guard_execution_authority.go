@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/google/uuid"
@@ -22,8 +23,8 @@ type GuardExecutionAuthorityReader interface {
 // and one provisioned tenant. Run/Turn IDs in the path are selectors only;
 // Runtime resolves their canonical Attempt/Turn binding from PostgreSQL.
 func NewGuardExecutionAuthorityHandler(reader GuardExecutionAuthorityReader, peer, tenant string) (http.Handler, error) {
-	if reader == nil || !validWorkloadIdentity(peer) || tenant == "" ||
-		len(tenant) > 255 || strings.TrimSpace(tenant) != tenant ||
+	if reader == nil || !validWorkloadIdentity(peer) || tenant == "" || len(tenant) > 255 || !utf8.ValidString(tenant) ||
+		strings.TrimSpace(tenant) != tenant ||
 		strings.ContainsAny(tenant, "\x00\r\n\t") {
 		return nil, errors.New("invalid Guard execution authority configuration")
 	}
