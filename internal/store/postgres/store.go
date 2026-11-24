@@ -321,6 +321,30 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := verifyDecisionAcceptanceCatalog(ctx, tx); err != nil {
 		return err
 	}
+	// v13 introduces the append-only current-Attempt authority generation
+	// ledger. Only unambiguous active first Attempts with an untouched CLOSED
+	// breaker are backfilled; no ambiguous or revoked history is rewritten.
+	var v13Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 13)",
+	).Scan(&v13Applied); err != nil {
+		return fmt.Errorf("read Runtime Attempt authority migration ledger: %w", err)
+	}
+	if !v13Applied {
+		script, err := migrationFiles.ReadFile("migrations/0013_runtime_run_attempt_authority.up.sql")
+		if err != nil {
+			return fmt.Errorf("read Runtime Attempt authority migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply Runtime Attempt authority migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO runtime_schema_migrations (version) VALUES (13)"); err != nil {
+			return fmt.Errorf("record Runtime Attempt authority migration: %w", err)
+		}
+	}
+	if err := verifyRuntimeAttemptAuthorityCatalog(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
