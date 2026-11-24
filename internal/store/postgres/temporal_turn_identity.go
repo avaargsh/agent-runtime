@@ -142,6 +142,22 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		if err != nil {
 			return empty, fmt.Errorf("persist Runtime Temporal RunAttempt: %w", err)
 		}
+		// The existing Run lock serializes allocation. This row commits with
+		// the Attempt and Turn, never in a second transaction or via backfill.
+		// It is a shadow generation-one record; consumers keep their current
+		// fail-closed checks until an explicit authority cutover.
+		schema := s.pool.Config().ConnConfig.RuntimeParams["search_path"]
+		if schema == "" {
+			schema = "public"
+		}
+		current := pgx.Identifier{schema, "runtime_current_attempts"}.Sanitize()
+		_, err = tx.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s (tenant_id,run_id,attempt_id,generation,breaker_epoch)
+			VALUES ($1,$2::uuid,$3::uuid,1,$4)
+		`, current), tenantID, runID, attemptID, breakerEpoch)
+		if err != nil {
+			return empty, fmt.Errorf("persist initial Runtime Attempt generation: %w", err)
+		}
 	} else if existingExecution != temporalExecutionID {
 		return empty, ErrTemporalExecutionConflict
 	}
