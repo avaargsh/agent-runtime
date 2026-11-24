@@ -49,7 +49,10 @@ type Binding struct {
 	RunID    string
 	// RunStatus is sampled from authoritative Runtime storage at lookup time.
 	// It is not an external execution grant or a fence against later cancellation.
-	RunStatus         string
+	RunStatus string
+	// RecoveryEligible is positive authority sampled with the historical binding.
+	// Its zero value denies load; Cancel deliberately ignores it.
+	RecoveryEligible  bool
 	AttemptID         string
 	HarnessInstanceID string
 	AgentSessionID    string
@@ -186,7 +189,7 @@ func (c *Client) Recover(ctx context.Context, tenantID, runID string) (RecoveryS
 	}
 	// A confirmed Agent session may outlive its Runtime Run. A cancelled or
 	// completed Run may be cancelled, but must never be loaded again.
-	if binding.RunStatus != "RUNNING" {
+	if binding.RunStatus != "RUNNING" || !binding.RecoveryEligible {
 		return RecoveryUnknown, ErrBindingInvalid
 	}
 	if !caps.LoadSession {

@@ -44,7 +44,10 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 	var binding acp.Binding
 	err = s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT c.tenant_id, c.run_id::text, r.status, c.attempt_id::text,
-			c.harness_instance_id, c.agent_session_id, c.working_dir
+			c.harness_instance_id, c.agent_session_id, c.working_dir,
+			NOT EXISTS (SELECT 1 FROM %s AS other_attempt
+				WHERE other_attempt.tenant_id=r.tenant_id AND other_attempt.run_id=r.run_id
+				AND other_attempt.run_attempt_id<>a.run_attempt_id)
 		FROM %s AS c
 		JOIN %s AS r ON r.tenant_id=c.tenant_id AND r.run_id=c.run_id
 			AND r.agent_release_id=c.agent_release_id
@@ -56,9 +59,9 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 			AND a.run_attempt_id=c.attempt_id AND a.workflow_id=r.workflow_id
 		WHERE c.tenant_id=$1 AND c.run_id=$2::uuid
 			AND c.state='CONFIRMED' AND c.agent_session_id IS NOT NULL
-	`, claimTable, runTable, principalTable, attemptTable), tenantID, runID).
+	`, attemptTable, claimTable, runTable, principalTable, attemptTable), tenantID, runID).
 		Scan(&binding.TenantID, &binding.RunID, &binding.RunStatus, &binding.AttemptID,
-			&binding.HarnessInstanceID, &binding.AgentSessionID, &binding.WorkingDir)
+			&binding.HarnessInstanceID, &binding.AgentSessionID, &binding.WorkingDir, &binding.RecoveryEligible)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return none, acp.ErrBindingInvalid
 	}
