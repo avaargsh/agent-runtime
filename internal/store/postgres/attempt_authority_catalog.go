@@ -20,7 +20,7 @@ func verifyRuntimeAttemptAuthorityCatalog(ctx context.Context, db harnessCatalog
 		{"runtime_run_attempt_authority_no_truncate", "reject_runtime_run_attempt_authority_mutation", 2 | 32},
 	}
 	for _, spec := range specs {
-		expected, err := harnessMigrationFunctionSource(migration, spec.functionName)
+		expected, err := harnessMigrationFunctionSource(string(migration), spec.functionName)
 		if err != nil {
 			return err
 		}
