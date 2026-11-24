@@ -49,10 +49,13 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 			AND a.run_id=r.run_id AND a.run_attempt_id=$3::uuid
 			AND a.workflow_id=r.workflow_id
 		JOIN %s AS b ON b.scope_kind='RUN' AND b.scope_id=r.run_id::text
+		JOIN %s AS ca ON ca.tenant_id=r.tenant_id AND ca.run_id=r.run_id
+			AND ca.attempt_id=a.run_attempt_id
 		WHERE r.tenant_id = $1 AND r.run_id = $2::uuid
 			AND r.agent_release_id = $5 AND r.source_request_digest = $7
 			AND r.status = 'RUNNING'
-			AND b.state='CLOSED' AND b.epoch=1 AND b.version>=1
+			AND b.state='CLOSED' AND b.epoch=1 AND b.version=1
+			AND ca.generation=1 AND ca.breaker_epoch=b.epoch
 			AND NOT EXISTS (
 				SELECT 1 FROM %s AS other_attempt
 				WHERE other_attempt.tenant_id=r.tenant_id
@@ -65,10 +68,10 @@ func (s *Store) ClaimHarnessSession(ctx context.Context, claim acp.SessionClaim)
 					AND p.snapshot_version='acp-principal/v1'
 					AND p.policy_revision=$6
 			)
-		FOR SHARE OF r,a,b
+		FOR SHARE OF r,a,b,ca
 		ON CONFLICT (tenant_id, run_id) DO NOTHING
 		RETURNING run_id::text
-	`, claimTable, runTable, attemptTable, relations.breakers, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, attemptTable, relations.breakers, relations.currentAttempts, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&insertedRunID)
 	if err == nil {
 		return acp.SessionClaimRecord{SessionClaim: claim, State: acp.ClaimPrepared, Created: true}, nil
@@ -168,10 +171,13 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 					AND a.run_id=r.run_id AND a.run_attempt_id=c.attempt_id
 					AND a.workflow_id=r.workflow_id
 				JOIN %s b ON b.scope_kind='RUN' AND b.scope_id=r.run_id::text
+				JOIN %s ca ON ca.tenant_id=r.tenant_id AND ca.run_id=r.run_id
+					AND ca.attempt_id=a.run_attempt_id
 				WHERE r.tenant_id=c.tenant_id
 				AND r.run_id=c.run_id AND r.agent_release_id=c.agent_release_id
 				AND r.source_request_digest=c.request_digest AND r.status='RUNNING'
-				AND b.state='CLOSED' AND b.epoch=1 AND b.version>=1
+				AND b.state='CLOSED' AND b.epoch=1 AND b.version=1
+			AND ca.generation=1 AND ca.breaker_epoch=b.epoch
 				AND NOT EXISTS (
 					SELECT 1 FROM %s AS other_attempt
 					WHERE other_attempt.tenant_id=r.tenant_id
@@ -184,9 +190,9 @@ func (s *Store) BeginHarnessSessionDispatch(ctx context.Context, claim acp.Sessi
 						AND p.snapshot_version='acp-principal/v1'
 						AND p.policy_revision=c.policy_revision
 				)
-				FOR SHARE OF r,a,b)
+				FOR SHARE OF r,a,b,ca)
 		RETURNING c.run_id::text
-	`, claimTable, runTable, attemptTable, relations.breakers, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
+	`, claimTable, runTable, attemptTable, relations.breakers, relations.currentAttempts, attemptTable, principalTable), claim.TenantID, claim.RunID, claim.AttemptID, claim.HarnessInstanceID,
 		claim.AgentReleaseID, claim.PolicyRevision, claim.RequestDigest, claim.WorkingDir).Scan(&runID)
 	if err == nil {
 		return true, nil
