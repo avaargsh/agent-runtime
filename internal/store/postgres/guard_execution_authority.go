@@ -165,7 +165,7 @@ func (s *Store) VerifyGuardExecutionAuthorityReadOnlyRole(ctx context.Context) e
 				AND NOT has_table_privilege(current_user,format('%I.%I',$1,relname),'TRIGGER')
 			)
 		FROM required
-	`).Scan(&valid, schema)
+	`, schema).Scan(&valid)
 	if err != nil || !valid {
 		return ErrGuardAuthorityDBRoleNotReadOnly
 	}
