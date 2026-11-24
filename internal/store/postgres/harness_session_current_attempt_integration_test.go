@@ -20,11 +20,17 @@ func TestHarnessSessionCreationRequiresCurrentAttemptPointer(t *testing.T) {
 					t.Fatalf("prepare claim before removing current Attempt: %+v err=%v", record, err)
 				}
 			}
-			if _, err := pool.Exec(ctx, `
-				DELETE FROM runtime_current_attempts
-				WHERE tenant_id=$1 AND run_id=$2::uuid
-			`, claim.TenantID, claim.RunID); err != nil {
-				t.Fatalf("remove current Attempt fixture: %v", err)
+			// Recreate a legacy v12 schema without backfilling its historical
+			// Attempt. The immutable v13 pointer trigger correctly prevents a
+			// normal DELETE, so model the supported migration path instead.
+			if _, err := pool.Exec(ctx, "DROP TABLE runtime_current_attempts"); err != nil {
+				t.Fatalf("remove v13 pointer table for legacy fixture: %v", err)
+			}
+			if _, err := pool.Exec(ctx, "DELETE FROM runtime_schema_migrations WHERE version=13"); err != nil {
+				t.Fatalf("reset v13 migration ledger for legacy fixture: %v", err)
+			}
+			if err := store.Migrate(ctx); err != nil {
+				t.Fatalf("reapply v13 without historical Attempt backfill: %v", err)
 			}
 
 			if stage == "claim" {
