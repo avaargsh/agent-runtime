@@ -341,6 +341,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record current Attempt migration: %w", err)
 		}
 	}
+	if err := verifyCurrentAttemptCatalog(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
