@@ -108,6 +108,9 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	// v7 and v6 schema elements before reapplying their migrations.
 	for _, sql := range []string{
 		"DROP TABLE runtime_current_attempts",
+		"DROP TRIGGER runtime_circuit_breaker_transition ON runtime_circuit_breakers",
+		"DROP FUNCTION enforce_runtime_circuit_breaker_transition()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 14",
 		"DELETE FROM runtime_schema_migrations WHERE version = 13",
 		"DROP TABLE runtime_decision_acceptances",
 		"DELETE FROM runtime_schema_migrations WHERE version = 12",
