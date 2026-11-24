@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/avaargsh/agent-runtime/internal/run"
+	"github.com/avaargsh/agent-runtime/internal/store/postgres"
 )
 
 // Guard's authenticated network-facing safety read must not treat a RUNNING
@@ -108,5 +109,61 @@ func TestTrustedGuardRunSafetyRejectsAmbiguousPersistedAttempt(t *testing.T) {
 	}
 	if attempts != 2 || pointers != 1 || turns != 1 || authority != current.RunAttemptID {
 		t.Fatalf("read-only rejection changed historical identity: attempts=%d pointers=%d turns=%d pointer=%s", attempts, pointers, turns, authority)
+	}
+}
+
+// A changed RUN breaker version with the original epoch is not an initial
+// authority snapshot: Temporal Turn binding already rejects the same state.
+// Guard's trusted safety read must not disagree even if privileged test DML
+// leaves a malformed CLOSED/epoch-one breaker in durable storage.
+func TestTrustedGuardRunSafetyRejectsBreakerVersionDrift(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	receipt, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		"UPDATE runs SET status='RUNNING',updated_at=now() WHERE tenant_id=$1 AND run_id=$2::uuid",
+		receipt.TenantID, receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := store.GetOrCreateTemporalTurn(ctx, receipt.TenantID, receipt.RunID,
+		receipt.WorkflowID, firstTemporalExecutionID, 1)
+	if err != nil || turn.AttemptGeneration != 1 || turn.BreakerEpoch != 1 {
+		t.Fatalf("canonical initial Attempt missing: %+v err=%v", turn, err)
+	}
+	before, err := store.GetTrustedGuardRunSafetySnapshot(ctx, receipt.TenantID, receipt.RunID)
+	if err != nil || !before.EligibleForGuardSubmission() || before.BreakerVersion != 1 {
+		t.Fatalf("untampered initial Breaker must pass prerequisite: %+v err=%v", before, err)
+	}
+	// Simulate inconsistent durable breaker state via privileged fixture SQL.
+	// Supported breaker transitions increase epoch along with version.
+	if _, err := pool.Exec(ctx, `UPDATE runtime_circuit_breakers
+		SET version=2,updated_at=clock_timestamp()
+		WHERE scope_kind='RUN' AND scope_id=$1`, receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := store.GetTrustedGuardRunSafetySnapshot(ctx, receipt.TenantID, receipt.RunID); !errors.Is(err, run.ErrInvalidIdentity) || result.EligibleForGuardSubmission() {
+		t.Fatalf("version-drifted breaker passed trusted Guard safety: %+v err=%v", result, err)
+	}
+	if diagnostic, err := store.GetGuardRunSafetySnapshot(ctx, receipt.TenantID, receipt.RunID); err != nil ||
+		diagnostic.Status != run.StatusRunning || diagnostic.BreakerEpoch != 1 || diagnostic.BreakerVersion != 2 {
+		t.Fatalf("diagnostic read unexpectedly lost durable evidence: %+v err=%v", diagnostic, err)
+	}
+	if _, err := store.GetOrCreateTemporalTurn(ctx, receipt.TenantID, receipt.RunID,
+		receipt.WorkflowID, firstTemporalExecutionID, 2); !errors.Is(err, postgres.ErrTemporalTurnUntrustedRun) {
+		t.Fatalf("Temporal Turn accepted the same stale breaker version: %v", err)
+	}
+	var attempts, pointers, turns int
+	if err := pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM runtime_run_attempts WHERE tenant_id=$1 AND run_id=$2::uuid),
+		(SELECT count(*) FROM runtime_current_attempts WHERE tenant_id=$1 AND run_id=$2::uuid),
+		(SELECT count(*) FROM runtime_decision_turns WHERE tenant_id=$1 AND run_id=$2::uuid)
+	`, receipt.TenantID, receipt.RunID).Scan(&attempts, &pointers, &turns); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 || pointers != 1 || turns != 1 {
+		t.Fatalf("denial mutated immutable history: attempts=%d pointers=%d turns=%d", attempts, pointers, turns)
 	}
 }
