@@ -116,7 +116,9 @@ func TestGuardExecutionAuthorityRejectsBreakerVersionDriftOpenBreakerAndTerminal
 		t.Fatalf("version-drifted breaker authority was returned: %+v err=%v", got, err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE runtime_circuit_breakers
-		SET state='OPEN',version=1,updated_at=clock_timestamp()
+		SET state='OPEN',version=1,reason_code='test-open',trigger_event_id='test-event',
+		    opened_at=clock_timestamp(),recovery_approval_id='',last_recovery_evidence_ref='',
+		    updated_at=clock_timestamp()
 		WHERE scope_kind='RUN' AND scope_id=$1`, receipt.RunID); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +126,9 @@ func TestGuardExecutionAuthorityRejectsBreakerVersionDriftOpenBreakerAndTerminal
 		t.Fatalf("OPEN breaker authority was returned: %+v err=%v", got, err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE runtime_circuit_breakers
-		SET state='CLOSED',version=1,updated_at=clock_timestamp()
+		SET state='CLOSED',version=1,reason_code='',trigger_event_id='',
+		    opened_at=NULL,recovery_approval_id='',last_recovery_evidence_ref='',
+		    updated_at=clock_timestamp()
 		WHERE scope_kind='RUN' AND scope_id=$1`, receipt.RunID); err != nil {
 		t.Fatal(err)
 	}
