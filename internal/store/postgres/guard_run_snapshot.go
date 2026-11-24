@@ -138,12 +138,14 @@ func (s *Store) guardRunSnapshot(ctx context.Context, tenantID, runID string, re
 		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: %w: unrecognized Run breaker state", run.ErrInvalidIdentity, ErrBreakerNotFound)
 	}
 	// The v1 Guard wire response does not carry Attempt generation, so
-	// absence, ambiguous Attempts or recovery to a newer epoch must fail closed before a
-	// RUNNING safety snapshot reaches Guard. No remote fencing is claimed.
+	// absence, ambiguity, changed breaker version, or recovery to a newer
+	// epoch must fail closed before Guard sees a RUNNING safety snapshot.
+	// Temporal Turn binding requires the same initial breaker version.
+	// This read does not claim remote fencing.
 	if requirePrincipal && result.Status == run.StatusRunning &&
 		(!attemptGeneration.Valid || attemptGeneration.Int64 != 1 ||
 			!attemptBreakerEpoch.Valid || attemptBreakerEpoch.Int64 != breakerEpoch.Int64 ||
-			ambiguousAttempt) {
+			breakerVersion.Int64 != 1 || ambiguousAttempt) {
 		return run.GuardRunSafetySnapshot{}, fmt.Errorf("%w: missing or stale current Attempt authority", run.ErrInvalidIdentity)
 	}
 	result.BreakerState = breakerState.String
