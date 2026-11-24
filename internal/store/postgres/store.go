@@ -344,6 +344,29 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := verifyCurrentAttemptCatalog(ctx, tx); err != nil {
 		return err
 	}
+	// v14 enforces the supported breaker state machine at the database write
+	// boundary. Existing v4 schema and durable breaker rows are not rewritten.
+	var v14Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 14)",
+	).Scan(&v14Applied); err != nil {
+		return fmt.Errorf("read circuit breaker transition migration ledger: %w", err)
+	}
+	if !v14Applied {
+		script, err := migrationFiles.ReadFile("migrations/0014_runtime_circuit_breaker_transition_guard.up.sql")
+		if err != nil {
+			return fmt.Errorf("read circuit breaker transition migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply circuit breaker transition migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO runtime_schema_migrations (version) VALUES (14)"); err != nil {
+			return fmt.Errorf("record circuit breaker transition migration: %w", err)
+		}
+	}
+	if err := verifyCircuitBreakerTransitionCatalog(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}

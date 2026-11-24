@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/avaargsh/agent-runtime/internal/breaker"
 	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
 )
@@ -44,11 +45,17 @@ func TestTrustedGuardRunSafetyRequiresCurrentAttemptAndMatchingBreakerEpoch(t *t
 		t.Fatalf("valid current Attempt must allow only Guard's prerequisite safety read: %+v err=%v", authorized, err)
 	}
 
-	// Simulate successful breaker recovery: the stale Attempt remains
-	// generation=1/epoch=1 and must not silently regain authority.
-	if _, err := pool.Exec(ctx, `UPDATE runtime_circuit_breakers
-		SET epoch=2,version=2,updated_at=now()
-		WHERE scope_kind='RUN' AND scope_id=$1`, receipt.RunID); err != nil {
+	// A supported breaker trip advances the epoch and revokes the stale
+	// generation-one Attempt. Recovery must not silently reauthorize it.
+	initialBreaker, err := store.GetBreaker(ctx, breaker.Scope{Kind: breaker.ScopeRun, ID: receipt.RunID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := initialBreaker.Trip("UNAUTHORIZED_EGRESS", "guard-attempt-fence", initialBreaker.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, initialBreaker.Version, opened); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.GetTrustedGuardRunSafetySnapshot(ctx, receipt.TenantID, receipt.RunID); !errors.Is(err, run.ErrInvalidIdentity) {
@@ -137,8 +144,8 @@ func TestTrustedGuardRunSafetyRejectsBreakerVersionDrift(t *testing.T) {
 	if err != nil || !before.EligibleForGuardSubmission() || before.BreakerVersion != 1 {
 		t.Fatalf("untampered initial Breaker must pass prerequisite: %+v err=%v", before, err)
 	}
-	// Simulate inconsistent durable breaker state via privileged fixture SQL.
-	// Supported breaker transitions increase epoch along with version.
+	// Simulate a privileged owner bypassing the ordinary transition guard.
+	disableBreakerTransitionTrigger(t, pool)
 	if _, err := pool.Exec(ctx, `UPDATE runtime_circuit_breakers
 		SET version=2,updated_at=clock_timestamp()
 		WHERE scope_kind='RUN' AND scope_id=$1`, receipt.RunID); err != nil {

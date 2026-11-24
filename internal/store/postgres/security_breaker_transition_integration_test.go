@@ -32,6 +32,7 @@ type testBreakerFixture struct {
 	}
 	store interface {
 		GetBreaker(context.Context, breaker.Scope) (breaker.Record, error)
+		CompareAndSwapBreaker(context.Context, uint64, breaker.Record) error
 	}
 }
 
@@ -141,4 +142,155 @@ func TestCircuitBreakerRowsCannotBeTruncated(t *testing.T) {
 	if _, err := fixture.store.GetBreaker(context.Background(), initial.Scope); err != nil {
 		t.Fatalf("rejected TRUNCATE removed durable breaker: %v", err)
 	}
+}
+
+
+func TestCircuitBreakerAcceptsSupportedTransitionsWithSynchronizedCounters(t *testing.T) {
+	fixture, initial := seedBreakerForTransitionTest(t, "run-breaker-supported-transitions")
+	ctx := context.Background()
+
+	opened, err := initial.Trip("UNAUTHORIZED_EGRESS", "event-supported-open", initial.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.CompareAndSwapBreaker(ctx, initial.Version, opened); err != nil {
+		t.Fatalf("CLOSED to OPEN: %v", err)
+	}
+	halfOpen, err := opened.BeginRecovery("approval-supported-one", opened.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.CompareAndSwapBreaker(ctx, opened.Version, halfOpen); err != nil {
+		t.Fatalf("OPEN to HALF_OPEN: %v", err)
+	}
+	reopened, err := halfOpen.Trip("RECOVERY_PROBE_FAILED", "event-supported-reopen", halfOpen.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.CompareAndSwapBreaker(ctx, halfOpen.Version, reopened); err != nil {
+		t.Fatalf("HALF_OPEN to OPEN: %v", err)
+	}
+	halfOpenAgain, err := reopened.BeginRecovery("approval-supported-two", reopened.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.CompareAndSwapBreaker(ctx, reopened.Version, halfOpenAgain); err != nil {
+		t.Fatalf("second OPEN to HALF_OPEN: %v", err)
+	}
+	recovered, err := halfOpenAgain.CompleteRecovery(
+		"approval-supported-two", "evidence://breaker/recovery-supported", halfOpenAgain.UpdatedAt.Add(time.Second),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.CompareAndSwapBreaker(ctx, halfOpenAgain.Version, recovered); err != nil {
+		t.Fatalf("HALF_OPEN to CLOSED: %v", err)
+	}
+	final, err := fixture.store.GetBreaker(ctx, initial.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.State != breaker.StateClosed || final.Epoch != 6 || final.Version != 6 {
+		t.Fatalf("supported state machine ended at %+v, want CLOSED/6/6", final)
+	}
+}
+
+func TestCircuitBreakerRejectsUnsupportedRecoveryShortcuts(t *testing.T) {
+	fixture, initial := seedBreakerForTransitionTest(t, "run-breaker-recovery-shortcuts")
+	ctx := context.Background()
+	opened, err := initial.Trip("UNAUTHORIZED_EGRESS", "event-recovery-shortcut", initial.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.CompareAndSwapBreaker(ctx, initial.Version, opened); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = fixture.pool.Exec(ctx,
+		"UPDATE runtime_circuit_breakers SET state='CLOSED',epoch=epoch+1,version=version+1,"+
+			"reason_code='',trigger_event_id='',opened_at=NULL,recovery_approval_id='',updated_at=clock_timestamp() "+
+			"WHERE scope_kind='RUN' AND scope_id=$1",
+		initial.Scope.ID,
+	)
+	requireBreakerCheckViolation(t, err)
+
+	halfOpen, err := opened.BeginRecovery("approval-shortcut-test", opened.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.CompareAndSwapBreaker(ctx, opened.Version, halfOpen); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fixture.pool.Exec(ctx,
+		"UPDATE runtime_circuit_breakers SET state='CLOSED',epoch=epoch+1,version=version+1,"+
+			"reason_code='',trigger_event_id='',opened_at=NULL,recovery_approval_id='',updated_at=clock_timestamp() "+
+			"WHERE scope_kind='RUN' AND scope_id=$1",
+		initial.Scope.ID,
+	)
+	requireBreakerCheckViolation(t, err)
+}
+
+func TestCircuitBreakerTransitionCatalogRejectsDisabledOrReplacedGuards(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"transition disabled", "ALTER TABLE runtime_circuit_breakers DISABLE TRIGGER runtime_circuit_breaker_transition"},
+		{"delete guard disabled", "ALTER TABLE runtime_circuit_breakers DISABLE TRIGGER runtime_circuit_breaker_no_delete"},
+		{"truncate guard disabled", "ALTER TABLE runtime_circuit_breakers DISABLE TRIGGER runtime_circuit_breaker_no_truncate"},
+		{"delete guard missing", "DROP TRIGGER runtime_circuit_breaker_no_delete ON runtime_circuit_breakers"},
+		{"truncate guard missing", "DROP TRIGGER runtime_circuit_breaker_no_truncate ON runtime_circuit_breakers"},
+		{"transition function replaced", "CREATE OR REPLACE FUNCTION enforce_runtime_circuit_breaker_transition() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END;'"},
+		{"mutation function replaced", "CREATE OR REPLACE FUNCTION reject_runtime_circuit_breaker_mutation() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NULL; END;'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pool, store := newTestStore(t)
+			if _, err := pool.Exec(context.Background(), tc.sql); err != nil {
+				t.Fatalf("prepare catalog drift: %v", err)
+			}
+			if err := store.Migrate(context.Background()); err == nil {
+				t.Fatalf("Runtime migration/startup accepted catalog drift: %s", tc.name)
+			}
+		})
+	}
+}
+
+type breakerTransitionTestDB interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// disableBreakerTransitionTrigger simulates privileged catalog tampering so
+// consumer fail-closed tests continue to exercise the separate read boundary.
+func disableBreakerTransitionTrigger(t *testing.T, db breakerTransitionTestDB) {
+	t.Helper()
+	if _, err := db.Exec(context.Background(), "ALTER TABLE runtime_circuit_breakers DISABLE TRIGGER runtime_circuit_breaker_transition"); err != nil {
+		t.Fatalf("disable breaker transition trigger for privileged fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.Exec(context.Background(), "ALTER TABLE runtime_circuit_breakers ENABLE ALWAYS TRIGGER runtime_circuit_breaker_transition"); err != nil {
+			t.Errorf("restore breaker transition trigger: %v", err)
+		}
+	})
+}
+
+// disableBreakerDeleteTrigger simulates privileged deletion of a durable
+// breaker to test consumer fail-closed behavior for a missing row.
+func disableBreakerDeleteTrigger(t *testing.T, db breakerTransitionTestDB) func() {
+	t.Helper()
+	if _, err := db.Exec(context.Background(), "ALTER TABLE runtime_circuit_breakers DISABLE TRIGGER runtime_circuit_breaker_no_delete"); err != nil {
+		t.Fatalf("disable breaker delete trigger for privileged fixture: %v", err)
+	}
+	restored := false
+	restore := func() {
+		if restored {
+			return
+		}
+		restored = true
+		if _, err := db.Exec(context.Background(), "ALTER TABLE runtime_circuit_breakers ENABLE ALWAYS TRIGGER runtime_circuit_breaker_no_delete"); err != nil {
+			t.Errorf("restore breaker delete trigger: %v", err)
+		}
+	}
+	t.Cleanup(restore)
+	return restore
 }

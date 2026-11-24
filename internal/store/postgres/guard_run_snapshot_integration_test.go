@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/avaargsh/agent-runtime/internal/breaker"
 	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
 )
@@ -48,12 +50,15 @@ func TestGuardRunSafetySnapshotIsTenantBoundAndFailClosed(t *testing.T) {
 		t.Fatalf("active Run with CLOSED breaker must be ready for further authorization: %+v err=%v", running, err)
 	}
 
-	if _, err := pool.Exec(ctx, `
-		UPDATE runtime_circuit_breakers
-		SET state='OPEN',reason_code='guard_test',trigger_event_id='guard-event',
-			opened_at=now(),epoch=2,version=2,updated_at=now()
-		WHERE scope_kind='RUN' AND scope_id=$1
-	`, created.ID); err != nil {
+	initialBreaker, err := store.GetBreaker(ctx, breaker.Scope{Kind: breaker.ScopeRun, ID: created.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := initialBreaker.Trip("GUARD_TEST", "guard-event", initialBreaker.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, initialBreaker.Version, opened); err != nil {
 		t.Fatal(err)
 	}
 	blocked, err := store.GetGuardRunSafetySnapshot(ctx, created.TenantID, created.ID)
@@ -61,12 +66,18 @@ func TestGuardRunSafetySnapshotIsTenantBoundAndFailClosed(t *testing.T) {
 		t.Fatalf("tripped Run breaker must block further admission: %+v err=%v", blocked, err)
 	}
 
-	if _, err := pool.Exec(ctx, `
-		UPDATE runtime_circuit_breakers
-		SET state='CLOSED',reason_code='',trigger_event_id='',opened_at=NULL,
-			recovery_approval_id='',epoch=3,version=3,updated_at=now()
-		WHERE scope_kind='RUN' AND scope_id=$1
-	`, created.ID); err != nil {
+	halfOpen, err := opened.BeginRecovery("guard-test-approval", opened.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, opened.Version, halfOpen); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := halfOpen.CompleteRecovery("guard-test-approval", "evidence://guard/test-recovery", halfOpen.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, halfOpen.Version, recovered); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, "UPDATE runs SET status='SUCCEEDED',updated_at=now() WHERE run_id=$1::uuid", created.ID); err != nil {
@@ -77,6 +88,7 @@ func TestGuardRunSafetySnapshotIsTenantBoundAndFailClosed(t *testing.T) {
 		t.Fatalf("terminal Run must block new protected effects: %+v err=%v", terminal, err)
 	}
 
+	disableBreakerDeleteTrigger(t, pool)
 	if _, err := pool.Exec(ctx,
 		"DELETE FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$1", created.ID); err != nil {
 		t.Fatal(err)
