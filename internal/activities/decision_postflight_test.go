@@ -175,7 +175,6 @@ func TestInvokeDecisionRejectsBreakerVersionDriftBeforeFirstPoll(t *testing.T) {
 	}
 }
 
-
 // The generation-one Turn was admitted only while the RUN breaker was CLOSED.
 // A direct state-only catalog drift to HALF_OPEN can preserve epoch/version 1;
 // Record.Check intentionally allows read-only probes in HALF_OPEN, but that
