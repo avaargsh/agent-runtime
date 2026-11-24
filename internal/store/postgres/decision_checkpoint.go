@@ -15,7 +15,7 @@ type checkpointQueryer interface {
 }
 
 type checkpointRelations struct {
-	runs, principals, attempts, turns, breakers, checkpoints string
+	runs, principals, attempts, authorities, turns, breakers, checkpoints string
 }
 
 func (s *Store) checkpointRelations() (checkpointRelations, error) {
@@ -28,8 +28,8 @@ func (s *Store) checkpointRelations() (checkpointRelations, error) {
 		schema = "public"
 	}
 	rel := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
-	return checkpointRelations{runs, principals, attempts, rel("runtime_decision_turns"),
-		rel("runtime_circuit_breakers"), rel("runtime_decision_checkpoints")}, nil
+	return checkpointRelations{runs, principals, attempts, rel("runtime_run_attempt_authorities"),
+		rel("runtime_decision_turns"), rel("runtime_circuit_breakers"), rel("runtime_decision_checkpoints")}, nil
 }
 
 // Read the accepted business input using the pinned schema, current active
