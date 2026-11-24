@@ -30,7 +30,7 @@ func TestReadOnlyPoolConfigEnablesReadOnlyTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] != "on" || cfg.MaxConns != 8 {
+	if cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] != "on" || cfg.ConnConfig.RuntimeParams["search_path"] != "public" || cfg.MaxConns != 8 {
 		t.Fatalf("database connection is not read-only bounded: params=%v max_conns=%d", cfg.ConnConfig.RuntimeParams, cfg.MaxConns)
 	}
 }
