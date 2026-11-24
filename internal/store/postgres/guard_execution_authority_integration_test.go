@@ -7,6 +7,7 @@ import (
 
 	"github.com/avaargsh/agent-runtime/internal/run"
 	"github.com/avaargsh/agent-runtime/internal/store/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const guardAuthorityExecutionID = "11111111-2222-4333-8444-555555555551"
