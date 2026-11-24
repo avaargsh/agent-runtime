@@ -56,7 +56,7 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 				AND other_attempt.run_attempt_id<>a.run_attempt_id)
 			AND EXISTS (SELECT 1 FROM %s AS b
 				WHERE b.scope_kind='RUN' AND b.scope_id=r.run_id::text
-				AND b.state='CLOSED' AND b.epoch=1 AND b.version>=1)
+				AND b.state='CLOSED' AND b.epoch=1 AND b.version=1)
 		FROM %s AS c
 		JOIN %s AS r ON r.tenant_id=c.tenant_id AND r.run_id=c.run_id
 			AND r.agent_release_id=c.agent_release_id
