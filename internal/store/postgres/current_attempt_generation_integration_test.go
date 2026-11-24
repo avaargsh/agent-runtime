@@ -83,14 +83,27 @@ func TestCurrentAttemptInitializationRollsBackOnTurnFailure(t *testing.T) {
 func TestCurrentAttemptMigrationDoesNotPromoteLegacyAttempt(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
-	r, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
+	command := testIntent()
+	command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
+	principal := trustedSnapshot()
+	principal.ActorID = principal.SubjectID
+	r, err := store.AcceptIntentWithPrincipal(ctx, command, principal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := store.GetOrCreateTemporalTurn(ctx, r.TenantID, r.RunID, r.WorkflowID, firstTemporalExecutionID, 1)
+	ref := run.AcceptedDecisionRef{
+		TenantID: r.TenantID, RunID: r.RunID, WorkflowID: r.WorkflowID,
+		RunIntentID: r.RunIntentID, RequestDigest: r.RequestDigest,
+	}
+	checkpoint, err := store.PrepareAcceptedDecision(ctx, ref, firstTemporalExecutionID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	oldAuthority, err := store.GetDecisionAuthority(ctx, r.TenantID, r.RunID, checkpoint.TurnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldReceipt := testContinuationReceipt(t, oldAuthority)
 	if _, err := pool.Exec(ctx, `DROP TABLE runtime_current_attempts;
 		DELETE FROM runtime_schema_migrations WHERE version=13`); err != nil {
 		t.Fatal(err)
@@ -101,22 +114,26 @@ func TestCurrentAttemptMigrationDoesNotPromoteLegacyAttempt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	replay, err := restarted.GetOrCreateTemporalTurn(ctx, r.TenantID, r.RunID, r.WorkflowID, firstTemporalExecutionID, 1)
-	if !errors.Is(err, postgres.ErrTemporalAttemptAuthorityMissing) || replay != (run.TemporalTurnIdentity{}) {
-		t.Fatalf("legacy Attempt without a current pointer was replayed: %+v %v", replay, err)
+	if _, err := restarted.GetOrCreateTemporalTurn(ctx, r.TenantID, r.RunID, r.WorkflowID, firstTemporalExecutionID, 1); !errors.Is(err, postgres.ErrTemporalAttemptAuthorityMissing) {
+		t.Fatalf("legacy Attempt replay gained current authority: %v", err)
 	}
-	var count, turns int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_current_attempts").Scan(&count); err != nil || count != 0 {
-		t.Fatalf("legacy history promoted implicitly: count=%d err=%v", count, err)
+	if _, err := restarted.GetDecisionAuthority(ctx, r.TenantID, r.RunID, checkpoint.TurnID); !errors.Is(err, run.ErrDecisionPreparationDenied) {
+		t.Fatalf("legacy checkpoint retained current Decision authority: %v", err)
 	}
-	var persistedTurn string
-	if err := pool.QueryRow(ctx, `
-		SELECT turn_id::text FROM runtime_decision_turns
-		WHERE tenant_id=$1 AND run_id=$2::uuid AND run_attempt_id=$3::uuid AND turn_index=1
-	`, r.TenantID, r.RunID, first.RunAttemptID).Scan(&persistedTurn); err != nil || persistedTurn != first.TurnID {
-		t.Fatalf("legacy Turn history changed after denied replay: turn=%s want=%s err=%v", persistedTurn, first.TurnID, err)
+	if _, err := restarted.AcceptDecisionContinuation(ctx, oldAuthority, oldReceipt); !errors.Is(err, run.ErrDecisionPreparationDenied) {
+		t.Fatalf("legacy receipt committed after pointer removal: %v", err)
 	}
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_decision_turns WHERE tenant_id=$1 AND run_id=$2::uuid", r.TenantID, r.RunID).Scan(&turns); err != nil || turns != 1 {
-		t.Fatalf("legacy Turn history count changed after denied replay: turns=%d err=%v", turns, err)
+	var current, checkpoints, acceptances int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_current_attempts").Scan(&current); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_decision_checkpoints WHERE tenant_id=$1 AND run_id=$2::uuid", r.TenantID, r.RunID).Scan(&checkpoints); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_decision_acceptances WHERE tenant_id=$1 AND run_id=$2::uuid", r.TenantID, r.RunID).Scan(&acceptances); err != nil {
+		t.Fatal(err)
+	}
+	if current != 0 || checkpoints != 1 || acceptances != 0 {
+		t.Fatalf("legacy history changed: current=%d checkpoints=%d acceptances=%d", current, checkpoints, acceptances)
 	}
 }
