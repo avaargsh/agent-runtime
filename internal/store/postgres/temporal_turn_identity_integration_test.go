@@ -314,6 +314,9 @@ func TestTemporalTurnRejectsUnsupportedCurrentAttemptGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if checkpoint.RunID != ref.RunID || checkpoint.TurnID == "" {
+		t.Fatalf("initial business checkpoint missing: %+v", checkpoint)
+	}
 
 	// This is not a supported generation transition. It deliberately bypasses
 	// the database guard after startup to prove the live read path still fails
