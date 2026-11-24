@@ -109,7 +109,11 @@ func TestCurrentAttemptInitializationRollsBackOnTurnFailure(t *testing.T) {
 func TestCurrentAttemptMigrationDoesNotPromoteLegacyAttempt(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
-	r, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
+	command := testIntent()
+	command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
+	principal := trustedSnapshot()
+	principal.ActorID = principal.SubjectID
+	r, err := store.AcceptIntentWithPrincipal(ctx, command, principal)
 	if err != nil {
 		t.Fatal(err)
 	}
