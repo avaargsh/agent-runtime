@@ -37,6 +37,22 @@ func TestCircuitBreakerRejectsStateOnlyTransitionAtDatabaseBoundary(t *testing.T
 		t.Fatal("database accepted CLOSED to HALF_OPEN state-only mutation without advancing epoch/version")
 	}
 
+	// A newly inserted breaker is also required to begin CLOSED at epoch and
+	// version one; a caller cannot seed a read-only HALF_OPEN probe directly.
+	_, err = pool.Exec(ctx, `
+		INSERT INTO runtime_circuit_breakers (
+			scope_kind, scope_id, state, epoch, version, reason_code,
+			trigger_event_id, opened_at, recovery_approval_id,
+			last_recovery_evidence_ref, updated_at
+		)
+		VALUES ('RUN', 'run-breaker-initial-half-open', 'HALF_OPEN', 1, 1,
+			'RECOVERY_IN_PROGRESS', 'event-initial-half-open',
+			clock_timestamp(), 'approval-initial-half-open', '', clock_timestamp())
+	`)
+	if err == nil {
+		t.Fatal("database accepted an initially HALF_OPEN breaker at epoch/version one")
+	}
+
 	persisted, err := store.GetBreaker(ctx, scope)
 	if err != nil {
 		t.Fatalf("read breaker after rejected transition: %v", err)
