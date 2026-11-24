@@ -98,14 +98,38 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		return empty, ErrTemporalTurnUntrustedRun
 	}
 
+	// Until fenced continuation exists, exactly one persisted Attempt may
+	// authorize a Turn. QueryRow would silently choose an arbitrary row
+	// if durable authority were inconsistent. The canonical Run lock
+	// serializes supported Attempt writers, not privileged out-of-band DML.
 	var attemptID, existingExecution string
-	err = tx.QueryRow(ctx, fmt.Sprintf(`
+	rows, err := tx.Query(ctx, fmt.Sprintf(`
 		SELECT run_attempt_id::text, temporal_execution_id::text
 		FROM %s
 		WHERE tenant_id=$1 AND run_id=$2::uuid
+		LIMIT 2
 		FOR UPDATE
-	`, rel.attempts), tenantID, runID).Scan(&attemptID, &existingExecution)
-	if errors.Is(err, pgx.ErrNoRows) {
+	`, rel.attempts), tenantID, runID)
+	if err != nil {
+		return empty, fmt.Errorf("read existing Runtime Temporal RunAttempt: %w", err)
+	}
+	attemptCount := 0
+	for rows.Next() {
+		attemptCount++
+		if attemptCount > 1 {
+			rows.Close()
+			return empty, ErrTemporalExecutionConflict
+		}
+		if err := rows.Scan(&attemptID, &existingExecution); err != nil {
+			rows.Close()
+			return empty, fmt.Errorf("scan existing Runtime Temporal RunAttempt: %w", err)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return empty, fmt.Errorf("read existing Runtime Temporal RunAttempt: %w", err)
+	}
+	if attemptCount == 0 {
 		if persistedStatus != string(run.StatusQueued) && persistedStatus != string(run.StatusRunning) {
 			return empty, ErrTemporalTurnUntrustedRun
 		}
@@ -118,8 +142,6 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		if err != nil {
 			return empty, fmt.Errorf("persist Runtime Temporal RunAttempt: %w", err)
 		}
-	} else if err != nil {
-		return empty, fmt.Errorf("read existing Runtime Temporal RunAttempt: %w", err)
 	} else if existingExecution != temporalExecutionID {
 		return empty, ErrTemporalExecutionConflict
 	}
