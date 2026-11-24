@@ -101,11 +101,14 @@ func TestCurrentAttemptMigrationDoesNotPromoteLegacyAttempt(t *testing.T) {
 		}
 	}
 	replay, err := restarted.GetOrCreateTemporalTurn(ctx, r.TenantID, r.RunID, r.WorkflowID, firstTemporalExecutionID, 1)
-	if err != nil || replay != first {
-		t.Fatalf("legacy replay changed: %+v %v", replay, err)
+	if !errors.Is(err, postgres.ErrTemporalAttemptAuthorityMissing) || replay != (run.TemporalTurnIdentity{}) {
+		t.Fatalf("legacy Attempt without a current pointer was replayed: %+v %v", replay, err)
 	}
-	var count int
+	var count, turns int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_current_attempts").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("legacy history promoted implicitly: count=%d err=%v", count, err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM runtime_decision_turns WHERE tenant_id=$1 AND run_id=$2::uuid", r.TenantID, r.RunID).Scan(&turns); err != nil || turns != 1 {
+		t.Fatalf("legacy Turn history changed after denied replay: turns=%d err=%v", turns, err)
 	}
 }

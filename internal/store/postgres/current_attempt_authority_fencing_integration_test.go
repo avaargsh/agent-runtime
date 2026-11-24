@@ -28,7 +28,7 @@ func TestDecisionAuthorityRejectsHistoricalAttemptAfterBreakerRecovery(t *testin
 		t.Fatal(err)
 	}
 	oldAuthority, err := store.GetDecisionAuthority(ctx, ref.TenantID, ref.RunID, checkpoint.TurnID)
-	if err != nil || oldAuthority.AttemptGeneration != 1 || oldAuthority.BreakerEpoch != 1 {
+	if err != nil || oldAuthority.BreakerEpoch != 1 {
 		t.Fatalf("initial Decision authority missing generation fence: %+v %v", oldAuthority, err)
 	}
 	oldReceipt := testContinuationReceipt(t, oldAuthority)

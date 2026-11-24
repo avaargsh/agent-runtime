@@ -47,7 +47,7 @@ func readDecisionAuthority(ctx context.Context, q checkpointQueryer, rel checkpo
 	var input []byte
 	query := fmt.Sprintf(`
 		SELECT r.tenant_id, r.run_id::text, r.run_intent_id::text, r.source_request_digest,
-		       r.workflow_id, c.execution_id::text, c.attempt_id::text, aa.generation, c.turn_id::text,
+		       r.workflow_id, c.execution_id::text, c.attempt_id::text, c.turn_id::text,
 		       t.invocation_id::text, r.agent_id, r.agent_release_id, r.session_id,
 		       p.project_id, p.subject_id, p.actor_id, p.policy_revision, p.config_digest,
 		       c.input_digest, c.phase, r.status, b.state, b.epoch, b.version,
@@ -82,7 +82,7 @@ func readDecisionAuthority(ctx context.Context, q checkpointQueryer, rel checkpo
 	}
 	err := q.QueryRow(ctx, query, tenant, runID, invocationID).Scan(
 		&a.TenantID, &a.RunID, &a.RunIntentID, &a.RequestDigest, &a.WorkflowID,
-		&a.ExecutionID, &a.AttemptID, &a.AttemptGeneration, &a.TurnID, &a.InvocationID, &a.AgentID, &a.AgentReleaseID, &a.SessionID,
+		&a.ExecutionID, &a.AttemptID, &a.TurnID, &a.InvocationID, &a.AgentID, &a.AgentReleaseID, &a.SessionID,
 		&a.ProjectID, &a.SubjectID, &a.ActorID, &a.PolicyRevision, &a.ConfigDigest,
 		&a.InputDigest, &a.Phase, &a.Status, &a.BreakerState, &a.BreakerEpoch, &a.BreakerVersion,
 		&principal.Version, &principal.IssuerSPIFFEID, &input)
