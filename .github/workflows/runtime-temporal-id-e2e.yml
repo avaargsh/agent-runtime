@@ -11,6 +11,7 @@ on:
       - "internal/startdispatch/**"
       - "internal/store/postgres/*decision_checkpoint*"
       - "internal/store/postgres/*decision_continuation*"
+      - "internal/store/postgres/*decision_authority*"
       - "internal/activities/decision_continuation*"
       - "internal/decision/continuation*"
       - "internal/store/postgres/temporal_turn_identity.go"
