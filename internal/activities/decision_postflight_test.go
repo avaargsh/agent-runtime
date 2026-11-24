@@ -91,7 +91,6 @@ func TestInvokeDecisionFailsClosedWhenPostInvocationBreakerReadFails(t *testing.
 	}
 }
 
-
 // The persisted Temporal Turn is bound to breaker epoch/version one. A later
 // recovery must not silently rebase that stale Turn onto the new breaker
 // epoch, even though HALF_OPEN permits read-only probes in a newly admitted
@@ -115,7 +114,7 @@ func TestInvokeDecisionRejectsBreakerRecoveryForStaleTemporalTurn(t *testing.T) 
 	client := &immediateDecisionInvoker{}
 	activity := Activities{
 		Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
-		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
 		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
 	}
 	if _, err := activity.InvokeDecision(context.Background(), activityTurn()); err == nil {
@@ -149,7 +148,6 @@ func TestInvokeDecisionRejectsBreakerVersionDriftAfterTemporalTurnBinding(t *tes
 			client.calls, store.callCount())
 	}
 }
-
 
 // The breaker may change after preflight but before a fast Decision response,
 // beating the periodic watcher. The postflight read must still be pinned to
