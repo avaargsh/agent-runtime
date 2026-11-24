@@ -98,6 +98,8 @@ func temporalTestTurnIdentity() run.TemporalTurnIdentity {
 		TurnID:              temporalTestTurnID,
 		InvocationID:        temporalTestTurnID,
 		TurnIndex:           1,
+		AttemptGeneration:   1,
+		BreakerEpoch:        1,
 	}
 }
 

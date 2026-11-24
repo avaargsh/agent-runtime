@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrTemporalTurnUntrustedRun  = errors.New("Runtime Run is not bound to an immutable ACP principal")
-	ErrTemporalExecutionConflict = errors.New("different Temporal execution attempted to own an existing Runtime Run")
+	ErrTemporalTurnUntrustedRun        = errors.New("Runtime Run is not bound to an immutable ACP principal")
+	ErrTemporalExecutionConflict       = errors.New("different Temporal execution attempted to own an existing Runtime Run")
+	ErrTemporalAttemptAuthorityMissing = errors.New("Runtime Temporal Attempt has no current authority generation")
 )
 
 // GetOrCreateTemporalTurn commits Runtime-owned RunAttempt/Turn identities
@@ -94,7 +95,7 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		return empty, fmt.Errorf("load canonical Runtime Run/ACP principal and breaker: %w", err)
 	}
 	if (persistedStatus != string(run.StatusQueued) && persistedStatus != string(run.StatusRunning)) ||
-		breakerState != "CLOSED" || breakerEpoch != 1 || breakerVersion < 1 {
+		breakerState != "CLOSED" || breakerEpoch != 1 || breakerVersion != 1 {
 		return empty, ErrTemporalTurnUntrustedRun
 	}
 
@@ -129,6 +130,7 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 	if err := rows.Err(); err != nil {
 		return empty, fmt.Errorf("read existing Runtime Temporal RunAttempt: %w", err)
 	}
+	var attemptGeneration int64
 	if attemptCount == 0 {
 		if persistedStatus != string(run.StatusQueued) && persistedStatus != string(run.StatusRunning) {
 			return empty, ErrTemporalTurnUntrustedRun
@@ -142,24 +144,35 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		if err != nil {
 			return empty, fmt.Errorf("persist Runtime Temporal RunAttempt: %w", err)
 		}
-		// The existing Run lock serializes allocation. This row commits with
-		// the Attempt and Turn, never in a second transaction or via backfill.
-		// It is a shadow generation-one record; consumers keep their current
-		// fail-closed checks until an explicit authority cutover.
-		schema := s.pool.Config().ConnConfig.RuntimeParams["search_path"]
-		if schema == "" {
-			schema = "public"
-		}
-		current := pgx.Identifier{schema, "runtime_current_attempts"}.Sanitize()
-		_, err = tx.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s (tenant_id,run_id,attempt_id,generation,breaker_epoch)
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s
+			(tenant_id,run_id,attempt_id,generation,breaker_epoch)
 			VALUES ($1,$2::uuid,$3::uuid,1,$4)
-		`, current), tenantID, runID, attemptID, breakerEpoch)
-		if err != nil {
-			return empty, fmt.Errorf("persist initial Runtime Attempt generation: %w", err)
+		`, rel.currentAttempts), tenantID, runID, attemptID, breakerEpoch); err != nil {
+			return empty, fmt.Errorf("persist initial Runtime Attempt pointer: %w", err)
 		}
+		attemptGeneration = 1
 	} else if existingExecution != temporalExecutionID {
 		return empty, ErrTemporalExecutionConflict
+	} else {
+		var authorityBreakerEpoch int64
+		err = tx.QueryRow(ctx, fmt.Sprintf(`
+			SELECT current_attempt.generation, current_attempt.breaker_epoch
+			FROM %s current_attempt
+			WHERE current_attempt.tenant_id=$1 AND current_attempt.run_id=$2::uuid
+			  AND current_attempt.attempt_id=$3::uuid
+			FOR SHARE
+		`, rel.currentAttempts), tenantID, runID, attemptID).
+			Scan(&attemptGeneration, &authorityBreakerEpoch)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return empty, ErrTemporalAttemptAuthorityMissing
+		}
+		if err != nil {
+			return empty, fmt.Errorf("read current Runtime Temporal Attempt authority: %w", err)
+		}
+		if attemptGeneration < 1 || authorityBreakerEpoch != breakerEpoch {
+			return empty, ErrTemporalExecutionConflict
+		}
 	}
 
 	var turnID, invocationID string
@@ -193,6 +206,8 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		TemporalExecutionID: temporalExecutionID,
 		RunAttemptID:        attemptID, TurnID: turnID,
 		InvocationID: invocationID, TurnIndex: turnIndex,
+		AttemptGeneration: attemptGeneration, BreakerEpoch: breakerEpoch,
+		AttemptGeneration: attemptGeneration, BreakerEpoch: breakerEpoch,
 	}
 	if err := identity.Validate(); err != nil {
 		return empty, err

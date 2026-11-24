@@ -38,7 +38,8 @@ func TestDecisionAuthorityRequiresCurrentCommittedTurn(t *testing.T) {
 		got.ActorID != principal.ActorID || got.ProjectID != principal.ProjectID ||
 		got.PolicyRevision != principal.PolicyRevision || got.ConfigDigest != principal.ConfigDigest ||
 		got.AgentID != command.AgentID || got.AgentReleaseID != command.AgentReleaseID || got.SessionID != command.SessionID ||
-		got.BreakerEpoch < 1 || got.BreakerVersion < 1 || got.Status != "RUNNING" || got.BreakerState != "CLOSED" {
+		got.AttemptGeneration != 1 || got.BreakerEpoch != 1 || got.BreakerVersion != 1 ||
+		got.Status != "RUNNING" || got.BreakerState != "CLOSED" {
 		t.Fatalf("canonical durable binding unavailable: %+v %v", got, err)
 	}
 	for _, bad := range [][3]string{
