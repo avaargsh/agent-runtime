@@ -52,47 +52,64 @@ func TestTemporalTurnRejectsAmbiguousPersistedAttempts(t *testing.T) {
 }
 
 func TestAcceptedDecisionCheckpointRejectsAmbiguousPersistedAttempts(t *testing.T) {
-	pool, store := newTestStore(t)
-	ctx := context.Background()
-	command := testIntent()
-	command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
-	receipt, err := store.AcceptIntentWithPrincipal(ctx, command, trustedSnapshot())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref := run.AcceptedDecisionRef{
-		TenantID: receipt.TenantID, RunID: receipt.RunID, WorkflowID: receipt.WorkflowID,
-		RunIntentID: receipt.RunIntentID, RequestDigest: receipt.RequestDigest,
-	}
-	for i, attempt := range []string{
-		"33333333-3333-4333-8333-333333333331",
-		"33333333-3333-4333-8333-333333333332",
-	} {
-		execution := []string{firstTemporalExecutionID, secondTemporalExecutionID}[i]
-		if _, err := pool.Exec(ctx, `INSERT INTO runtime_run_attempts
-			(tenant_id, run_id, run_attempt_id, workflow_id, temporal_execution_id)
-			VALUES ($1,$2::uuid,$3::uuid,$4,$5::uuid)`,
-			ref.TenantID, ref.RunID, attempt, ref.WorkflowID, execution); err != nil {
-			t.Fatalf("seed ambiguous persisted Attempt: %v", err)
+	for _, replay := range []bool{false, true} {
+		name := "initial"
+		if replay {
+			name = "replay"
 		}
-	}
-	for _, execution := range []string{firstTemporalExecutionID, secondTemporalExecutionID} {
-		got, err := store.PrepareAcceptedDecision(ctx, ref, execution)
-		if !errors.Is(err, postgres.ErrTemporalExecutionConflict) || got != (run.DecisionCheckpoint{}) {
-			t.Errorf("ambiguous Attempt prepared business checkpoint: execution=%s checkpoint=%+v err=%v", execution, got, err)
-		}
-	}
-	var attempts, turns, checkpoints int
-	var status string
-	if err := pool.QueryRow(ctx, `SELECT
-		(SELECT count(*) FROM runtime_run_attempts WHERE tenant_id=$1 AND run_id=$2::uuid),
-		(SELECT count(*) FROM runtime_decision_turns WHERE tenant_id=$1 AND run_id=$2::uuid),
-		(SELECT count(*) FROM runtime_decision_checkpoints WHERE tenant_id=$1 AND run_id=$2::uuid),
-		(SELECT status FROM runs WHERE tenant_id=$1 AND run_id=$2::uuid)`,
-		ref.TenantID, ref.RunID).Scan(&attempts, &turns, &checkpoints, &status); err != nil {
-		t.Fatal(err)
-	}
-	if attempts != 2 || turns != 0 || checkpoints != 0 || status != "QUEUED" {
-		t.Fatalf("denied preparation mutated state: attempts=%d turns=%d checkpoints=%d status=%s", attempts, turns, checkpoints, status)
+		t.Run(name, func(t *testing.T) {
+			pool, store := newTestStore(t)
+			ctx := context.Background()
+			command := testIntent()
+			command.Input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
+			receipt, err := store.AcceptIntentWithPrincipal(ctx, command, trustedSnapshot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := run.AcceptedDecisionRef{TenantID: receipt.TenantID, RunID: receipt.RunID,
+				WorkflowID: receipt.WorkflowID, RunIntentID: receipt.RunIntentID, RequestDigest: receipt.RequestDigest}
+			wantCount, wantStatus := 0, "QUEUED"
+			if replay {
+				if _, err := store.PrepareAcceptedDecision(ctx, ref, firstTemporalExecutionID); err != nil {
+					t.Fatal(err)
+				}
+				wantCount, wantStatus = 1, "RUNNING"
+			} else {
+				if _, err := pool.Exec(ctx, `INSERT INTO runtime_run_attempts
+					(tenant_id,run_id,run_attempt_id,workflow_id,temporal_execution_id)
+					VALUES ($1,$2::uuid,$3::uuid,$4,$5::uuid)`, ref.TenantID, ref.RunID,
+					"33333333-3333-4333-8333-333333333331", ref.WorkflowID, firstTemporalExecutionID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := pool.Exec(ctx, `INSERT INTO runtime_run_attempts
+				(tenant_id,run_id,run_attempt_id,workflow_id,temporal_execution_id)
+				VALUES ($1,$2::uuid,$3::uuid,$4,$5::uuid)`, ref.TenantID, ref.RunID,
+				"33333333-3333-4333-8333-333333333332", ref.WorkflowID, secondTemporalExecutionID); err != nil {
+				t.Fatal(err)
+			}
+
+			// Exercise both execution IDs so arbitrary row order cannot
+			// hide an unsafe initial allocation or checkpoint replay.
+			for _, execution := range []string{firstTemporalExecutionID, secondTemporalExecutionID} {
+				got, err := postgres.New(pool).PrepareAcceptedDecision(ctx, ref, execution)
+				if !errors.Is(err, postgres.ErrTemporalExecutionConflict) || got != (run.DecisionCheckpoint{}) {
+					t.Errorf("ambiguous Attempt returned business checkpoint: %+v err=%v", got, err)
+				}
+			}
+			var attempts, turns, checkpoints int
+			var status string
+			if err := pool.QueryRow(ctx, `SELECT
+				(SELECT count(*) FROM runtime_run_attempts WHERE tenant_id=$1 AND run_id=$2::uuid),
+				(SELECT count(*) FROM runtime_decision_turns WHERE tenant_id=$1 AND run_id=$2::uuid),
+				(SELECT count(*) FROM runtime_decision_checkpoints WHERE tenant_id=$1 AND run_id=$2::uuid),
+				(SELECT status FROM runs WHERE tenant_id=$1 AND run_id=$2::uuid)`,
+				ref.TenantID, ref.RunID).Scan(&attempts, &turns, &checkpoints, &status); err != nil {
+				t.Fatal(err)
+			}
+			if attempts != 2 || turns != wantCount || checkpoints != wantCount || status != wantStatus {
+				t.Fatalf("ambiguous authority changed durable state: attempts=%d turns=%d checkpoints=%d status=%s", attempts, turns, checkpoints, status)
+			}
+		})
 	}
 }
