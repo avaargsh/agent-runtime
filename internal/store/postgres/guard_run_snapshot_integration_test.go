@@ -88,6 +88,7 @@ func TestGuardRunSafetySnapshotIsTenantBoundAndFailClosed(t *testing.T) {
 		t.Fatalf("terminal Run must block new protected effects: %+v err=%v", terminal, err)
 	}
 
+	disableBreakerDeleteTrigger(t, pool)
 	if _, err := pool.Exec(ctx,
 		"DELETE FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$1", created.ID); err != nil {
 		t.Fatal(err)

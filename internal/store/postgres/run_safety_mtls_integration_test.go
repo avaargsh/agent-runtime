@@ -181,12 +181,14 @@ func TestGuardSafetyAuthorityRealMTLSAndPostgreSQL(t *testing.T) {
 	assertStatus(valid, path(accepted.RunID), http.StatusForbidden)
 	// A durable RUN breaker that has disappeared is a verified deny, not
 	// transport/database unavailability. Guard must not retry it as a 503.
+	restoreBreakerDeleteTrigger := disableBreakerDeleteTrigger(t, pool)
 	if tag, err := pool.Exec(ctx,
 		"DELETE FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$1",
 		accepted.RunID); err != nil || tag.RowsAffected() != 1 {
 		t.Fatalf("delete durable RUN breaker: rows=%d err=%v", tag.RowsAffected(), err)
 	}
 	missingBreaker := assertStatus(valid, path(accepted.RunID), http.StatusForbidden)
+	restoreBreakerDeleteTrigger()
 	if !strings.Contains(missingBreaker, "RUN_SAFETY_DENIED") {
 		t.Fatalf("missing breaker must be a verified denial: %s", missingBreaker)
 	}

@@ -108,8 +108,12 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	// v7 and v6 schema elements before reapplying their migrations.
 	for _, sql := range []string{
 		"DROP TABLE runtime_current_attempts",
+		"DROP TRIGGER runtime_circuit_breaker_no_delete ON runtime_circuit_breakers",
+		"DROP TRIGGER runtime_circuit_breaker_no_truncate ON runtime_circuit_breakers",
+		"DROP FUNCTION reject_runtime_circuit_breaker_mutation()",
 		"DROP TRIGGER runtime_circuit_breaker_transition ON runtime_circuit_breakers",
 		"DROP FUNCTION enforce_runtime_circuit_breaker_transition()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 16",
 		"DELETE FROM runtime_schema_migrations WHERE version = 15",
 		"DELETE FROM runtime_schema_migrations WHERE version = 14",
 		"DELETE FROM runtime_schema_migrations WHERE version = 13",
@@ -161,8 +165,8 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 15 {
-		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 15", version)
+	if version != 16 {
+		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 16", version)
 	}
 	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
 		t.Fatal("previously applied v4 database still permits audit TRUNCATE")
@@ -470,8 +474,12 @@ func TestSecurityMigrationV4RollsBackAtomically(t *testing.T) {
 	// Return the isolated schema to the v3 shape, then install a conflicting
 	// breaker relation so migration v4 fails after creating its audit objects.
 	for _, statement := range []string{
+		"DROP TRIGGER runtime_circuit_breaker_no_delete ON runtime_circuit_breakers",
+		"DROP TRIGGER runtime_circuit_breaker_no_truncate ON runtime_circuit_breakers",
+		"DROP FUNCTION reject_runtime_circuit_breaker_mutation()",
 		"DROP TRIGGER runtime_circuit_breaker_transition ON runtime_circuit_breakers",
 		"DROP FUNCTION enforce_runtime_circuit_breaker_transition()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 16",
 		"DELETE FROM runtime_schema_migrations WHERE version = 15",
 		"DELETE FROM runtime_schema_migrations WHERE version = 14",
 		"DROP TRIGGER runs_create_initial_breaker ON runs",

@@ -385,6 +385,27 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record circuit breaker reopen precision migration: %w", err)
 		}
 	}
+	// v16 prevents ordinary writers from resetting durable breaker identity
+	// by deleting rows or truncating the table. v14/v15 transition semantics
+	// remain unchanged.
+	var v16Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 16)",
+	).Scan(&v16Applied); err != nil {
+		return fmt.Errorf("read circuit breaker retention migration ledger: %w", err)
+	}
+	if !v16Applied {
+		script, err := migrationFiles.ReadFile("migrations/0016_runtime_circuit_breaker_retention_guard.up.sql")
+		if err != nil {
+			return fmt.Errorf("read circuit breaker retention migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply circuit breaker retention migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO runtime_schema_migrations (version) VALUES (16)"); err != nil {
+			return fmt.Errorf("record circuit breaker retention migration: %w", err)
+		}
+	}
 	if err := verifyCircuitBreakerTransitionCatalog(ctx, tx); err != nil {
 		return err
 	}
