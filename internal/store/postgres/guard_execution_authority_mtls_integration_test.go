@@ -71,9 +71,9 @@ func TestGuardExecutionAuthorityRealMTLSAndPostgreSQL(t *testing.T) {
 		}
 		leaf := &x509.Certificate{
 			SerialNumber: big.NewInt(serial), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
-			KeyUsage: x509.KeyUsageDigitalSignature,
+			KeyUsage:    x509.KeyUsageDigitalSignature,
 			ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-			URIs: uris,
+			URIs:        uris,
 		}
 		serial++
 		der, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
