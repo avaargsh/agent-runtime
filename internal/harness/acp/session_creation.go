@@ -75,7 +75,16 @@ func (c *Client) CreateSession(ctx context.Context, claim SessionClaim) (Session
 		MCPServers []any  `json:"mcpServers"`
 	}{claim.WorkingDir, []any{}}
 	var response map[string]json.RawMessage
-	if err := c.rpc.Call(ctx, "session/new", params, &response); err != nil {
+	// The concrete bounded transport exposes creation only to this package.
+	// Other RPC implementations are trusted dependencies of the Client and
+	// must obey the same contract; the public StreamRPC.Call remains denied.
+	var callErr error
+	if wire, ok := c.rpc.(*StreamRPC); ok {
+		callErr = wire.createSession(ctx, params, &response)
+	} else {
+		callErr = c.rpc.Call(ctx, "session/new", params, &response)
+	}
+	if callErr != nil {
 		return unknown, ErrSessionCreationUncertain
 	}
 	// Do not accept missing/null or case-folded aliases of sessionId.
