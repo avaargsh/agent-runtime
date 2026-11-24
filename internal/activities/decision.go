@@ -253,3 +253,15 @@ func checkBoundRunBreaker(record breaker.Record, expectedEpoch uint64) error {
 	}
 	return record.Check(expectedEpoch, breaker.EffectReadOnly)
 }
+
+// checkBoundRunBreaker keeps every preflight, in-flight and postflight read
+// pinned to the breaker fence captured in the persisted Temporal Turn. A
+// fresh breaker read must never rebase an old Turn onto a newer recovery
+// epoch. Version one is the only enabled breaker contract for generation-one
+// Attempts; a future recovery flow must create an explicit new authority.
+func checkBoundRunBreaker(record breaker.Record, expectedEpoch uint64) error {
+	if record.Version != 1 {
+		return fmt.Errorf("Run breaker version changed after Temporal Turn binding: got %d, want 1", record.Version)
+	}
+	return record.Check(expectedEpoch, breaker.EffectReadOnly)
+}
