@@ -81,4 +81,11 @@ func TestHarnessRecoveryDeniesRevokedBreakerPreservesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("recovered epoch")
+
+	// A missing breaker must deny recovery without hiding the confirmed
+	// historical binding needed for best-effort cancellation.
+	if _, err := pool.Exec(ctx, `DELETE FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$1`, claim.RunID); err != nil {
+		t.Fatal(err)
+	}
+	check("missing breaker")
 }
