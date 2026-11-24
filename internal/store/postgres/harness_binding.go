@@ -23,7 +23,9 @@ var _ acp.BindingStore = (*Store)(nil)
 //
 // This read does not authorize an external Harness command, permission,
 // protected effect or new dispatch grant. An already-cancelled Run may still
-// need its confirmed Session ID to send session/cancel.
+// need its confirmed Session ID to send session/cancel. Recovery eligibility
+// samples the initial CLOSED breaker epoch and unambiguous Attempt together
+// with historical evidence; it is not a fence against later revocation.
 func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.Binding, error) {
 	var none acp.Binding
 	if s == nil || s.pool == nil {
@@ -41,6 +43,10 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 	if err != nil {
 		return none, err
 	}
+	relations, err := s.checkpointRelations()
+	if err != nil {
+		return none, err
+	}
 	var binding acp.Binding
 	err = s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT c.tenant_id, c.run_id::text, r.status, c.attempt_id::text,
@@ -48,6 +54,9 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 			NOT EXISTS (SELECT 1 FROM %s AS other_attempt
 				WHERE other_attempt.tenant_id=r.tenant_id AND other_attempt.run_id=r.run_id
 				AND other_attempt.run_attempt_id<>a.run_attempt_id)
+			AND EXISTS (SELECT 1 FROM %s AS b
+				WHERE b.scope_kind='RUN' AND b.scope_id=r.run_id::text
+				AND b.state='CLOSED' AND b.epoch=1 AND b.version>=1)
 		FROM %s AS c
 		JOIN %s AS r ON r.tenant_id=c.tenant_id AND r.run_id=c.run_id
 			AND r.agent_release_id=c.agent_release_id
@@ -59,7 +68,7 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 			AND a.run_attempt_id=c.attempt_id AND a.workflow_id=r.workflow_id
 		WHERE c.tenant_id=$1 AND c.run_id=$2::uuid
 			AND c.state='CONFIRMED' AND c.agent_session_id IS NOT NULL
-	`, attemptTable, claimTable, runTable, principalTable, attemptTable), tenantID, runID).
+	`, attemptTable, relations.breakers, claimTable, runTable, principalTable, attemptTable), tenantID, runID).
 		Scan(&binding.TenantID, &binding.RunID, &binding.RunStatus, &binding.AttemptID,
 			&binding.HarnessInstanceID, &binding.AgentSessionID, &binding.WorkingDir, &binding.RecoveryEligible)
 	if errors.Is(err, pgx.ErrNoRows) {

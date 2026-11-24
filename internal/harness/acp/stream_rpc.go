@@ -27,10 +27,11 @@ var (
 // supplies the already-isolated byte stream, and owns process authentication,
 // isolation, limits, credentials and termination.
 //
-// Only initialize/session-load calls and session-cancel notifications can
-// leave this adapter. Agent permission requests are always cancelled. No
-// terminal, filesystem, session/new, session/prompt or protected effect can be
-// initiated here. Updates are buffered only, NOT durable evidence.
+// Public calls allow only initialize/session/load; session/cancel is the
+// only notification. The package-private creation path is used exclusively
+// after a durable Runtime dispatch grant. Agent permission requests are
+// always cancelled. No terminal, filesystem, session/prompt or protected
+// effect is initiated here. Updates are buffered, NOT durable evidence.
 type StreamRPC struct {
 	stream io.ReadWriteCloser
 
@@ -86,6 +87,17 @@ func (s *StreamRPC) Call(ctx context.Context, method string, params any, result 
 	if method != "initialize" && method != "session/load" {
 		return ErrRPCMethodDenied
 	}
+	return s.call(ctx, method, params, result)
+}
+
+// createSession is deliberately package-private. Only the creation adapter
+// calls it after consuming a committed durable dispatch grant. Public Call
+// must continue denying session/new, including for callers with a StreamRPC.
+func (s *StreamRPC) createSession(ctx context.Context, params any, result any) error {
+	return s.call(ctx, "session/new", params, result)
+}
+
+func (s *StreamRPC) call(ctx context.Context, method string, params any, result any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -95,7 +107,7 @@ func (s *StreamRPC) Call(ctx context.Context, method string, params any, result 
 		s.mu.Unlock()
 		return err
 	}
-	// Only initialize/session/load require responses. A second outstanding
+	// Only the bounded request methods require responses. A second outstanding
 	// call cannot acquire another pending slot or block in an Agent write.
 	// Return without retiring the stream so the original request and one-way
 	// session/cancel can still complete.
