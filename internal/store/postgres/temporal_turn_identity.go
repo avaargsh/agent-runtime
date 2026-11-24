@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrTemporalTurnUntrustedRun  = errors.New("Runtime Run is not bound to an immutable ACP principal")
-	ErrTemporalExecutionConflict = errors.New("different Temporal execution attempted to own an existing Runtime Run")
+	ErrTemporalTurnUntrustedRun        = errors.New("Runtime Run is not bound to an immutable ACP principal")
+	ErrTemporalExecutionConflict       = errors.New("different Temporal execution attempted to own an existing Runtime Run")
+	ErrTemporalAttemptAuthorityMissing = errors.New("Runtime Temporal Attempt has no current authority pointer")
 )
 
 // GetOrCreateTemporalTurn commits Runtime-owned RunAttempt/Turn identities
@@ -129,6 +130,7 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 	if err := rows.Err(); err != nil {
 		return empty, fmt.Errorf("read existing Runtime Temporal RunAttempt: %w", err)
 	}
+	var attemptGeneration, authorityBreakerEpoch int64
 	if attemptCount == 0 {
 		if persistedStatus != string(run.StatusQueued) && persistedStatus != string(run.StatusRunning) {
 			return empty, ErrTemporalTurnUntrustedRun
@@ -142,24 +144,36 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		if err != nil {
 			return empty, fmt.Errorf("persist Runtime Temporal RunAttempt: %w", err)
 		}
-		// The existing Run lock serializes allocation. This row commits with
-		// the Attempt and Turn, never in a second transaction or via backfill.
-		// It is a shadow generation-one record; consumers keep their current
-		// fail-closed checks until an explicit authority cutover.
-		schema := s.pool.Config().ConnConfig.RuntimeParams["search_path"]
-		if schema == "" {
-			schema = "public"
-		}
-		current := pgx.Identifier{schema, "runtime_current_attempts"}.Sanitize()
+		// The current pointer commits with the Attempt and Turn under the
+		// same canonical Run/breaker lock. Legacy Attempts are never promoted
+		// by replay or migration; only this fresh path creates generation 1.
 		_, err = tx.Exec(ctx, fmt.Sprintf(`
 			INSERT INTO %s (tenant_id,run_id,attempt_id,generation,breaker_epoch)
 			VALUES ($1,$2::uuid,$3::uuid,1,$4)
-		`, current), tenantID, runID, attemptID, breakerEpoch)
+		`, rel.currentAttempts), tenantID, runID, attemptID, breakerEpoch)
 		if err != nil {
-			return empty, fmt.Errorf("persist initial Runtime Attempt generation: %w", err)
+			return empty, fmt.Errorf("persist initial Runtime current Attempt: %w", err)
 		}
+		attemptGeneration, authorityBreakerEpoch = 1, breakerEpoch
 	} else if existingExecution != temporalExecutionID {
 		return empty, ErrTemporalExecutionConflict
+	} else {
+		err = tx.QueryRow(ctx, fmt.Sprintf(`
+			SELECT generation, breaker_epoch
+			FROM %s
+			WHERE tenant_id=$1 AND run_id=$2::uuid AND attempt_id=$3::uuid
+			FOR SHARE
+		`, rel.currentAttempts), tenantID, runID, attemptID).
+			Scan(&attemptGeneration, &authorityBreakerEpoch)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return empty, ErrTemporalAttemptAuthorityMissing
+		}
+		if err != nil {
+			return empty, fmt.Errorf("read Runtime current Attempt pointer: %w", err)
+		}
+		if attemptGeneration < 1 || authorityBreakerEpoch != breakerEpoch {
+			return empty, ErrTemporalAttemptAuthorityMissing
+		}
 	}
 
 	var turnID, invocationID string
@@ -193,6 +207,7 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		TemporalExecutionID: temporalExecutionID,
 		RunAttemptID:        attemptID, TurnID: turnID,
 		InvocationID: invocationID, TurnIndex: turnIndex,
+		AttemptGeneration: attemptGeneration, BreakerEpoch: authorityBreakerEpoch,
 	}
 	if err := identity.Validate(); err != nil {
 		return empty, err
