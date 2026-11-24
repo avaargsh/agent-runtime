@@ -28,13 +28,13 @@ type config struct {
 
 func readConfig(getenv func(string) string) (config, error) {
 	c := config{
-		dsn: getenv("RUNTIME_GUARD_AUTHORITY_DATABASE_URL"),
-		cert: getenv("RUNTIME_GUARD_AUTHORITY_TLS_CERT"),
-		key: getenv("RUNTIME_GUARD_AUTHORITY_TLS_KEY"),
-		ca: getenv("RUNTIME_GUARD_AUTHORITY_CLIENT_CA"),
-		peer: getenv("RUNTIME_GUARD_AUTHORITY_PEER_SPIFFE_ID"),
+		dsn:    getenv("RUNTIME_GUARD_AUTHORITY_DATABASE_URL"),
+		cert:   getenv("RUNTIME_GUARD_AUTHORITY_TLS_CERT"),
+		key:    getenv("RUNTIME_GUARD_AUTHORITY_TLS_KEY"),
+		ca:     getenv("RUNTIME_GUARD_AUTHORITY_CLIENT_CA"),
+		peer:   getenv("RUNTIME_GUARD_AUTHORITY_PEER_SPIFFE_ID"),
 		tenant: getenv("RUNTIME_GUARD_AUTHORITY_TENANT"),
-		addr: getenv("RUNTIME_GUARD_AUTHORITY_LISTEN_ADDR"),
+		addr:   getenv("RUNTIME_GUARD_AUTHORITY_LISTEN_ADDR"),
 	}
 	if c.dsn == "" || c.cert == "" || c.key == "" || c.ca == "" || c.peer == "" || c.tenant == "" {
 		return config{}, errors.New("missing Guard authority API configuration")
@@ -72,9 +72,9 @@ func loadTLS(certFile, keyFile, caFile string) (*tls.Config, error) {
 		return nil, errors.New("invalid Guard authority client CA")
 	}
 	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		ClientAuth: tls.RequireAndVerifyClientCert,
-		ClientCAs: roots,
+		MinVersion:   tls.VersionTLS13,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    roots,
 		Certificates: []tls.Certificate{cert},
 	}, nil
 }
@@ -104,14 +104,14 @@ func serve(ctx context.Context, c config) error {
 		return err
 	}
 	server := &http.Server{
-		Addr: c.addr,
-		Handler: handler,
-		TLSConfig: tlsConfig,
+		Addr:              c.addr,
+		Handler:           handler,
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 3 * time.Second,
-		ReadTimeout: 5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		IdleTimeout: 15 * time.Second,
-		MaxHeaderBytes: 8192,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       15 * time.Second,
+		MaxHeaderBytes:    8192,
 	}
 	errs := make(chan error, 1)
 	go func() { errs <- server.ListenAndServeTLS("", "") }()
