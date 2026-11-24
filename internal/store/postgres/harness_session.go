@@ -125,6 +125,11 @@ func (s *Store) ReadHarnessSessionClaim(ctx context.Context, claim acp.SessionCl
 	if (r.State == acp.ClaimConfirmed) != (r.AgentSessionID != "") {
 		return acp.SessionClaimRecord{}, acp.ErrBindingInvalid
 	}
+	// Persisted confirmations must satisfy the same identifier contract
+	// as new replies; database character limits alone are insufficient.
+	if r.State == acp.ClaimConfirmed && !validAgentSessionID(r.AgentSessionID) {
+		return acp.SessionClaimRecord{}, acp.ErrBindingInvalid
+	}
 	return r, nil
 }
 
