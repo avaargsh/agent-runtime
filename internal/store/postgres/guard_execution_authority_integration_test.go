@@ -99,7 +99,7 @@ func TestGuardExecutionAuthorityRejectsAmbiguousAttempt(t *testing.T) {
 	}
 }
 
-func TestGuardExecutionAuthorityRejectsBreakerVersionDriftAndTerminalRun(t *testing.T) {
+func TestGuardExecutionAuthorityRejectsBreakerVersionDriftOpenBreakerAndTerminalRun(t *testing.T) {
 	pool, store, receipt := runningPrincipalRun(t)
 	ctx := context.Background()
 	turn, err := store.GetOrCreateTemporalTurn(ctx, receipt.TenantID, receipt.RunID, receipt.WorkflowID, guardAuthorityExecutionID, 1)
@@ -114,6 +114,19 @@ func TestGuardExecutionAuthorityRejectsBreakerVersionDriftAndTerminalRun(t *test
 	}
 	if got, err := store.GetTrustedGuardExecutionAuthority(ctx, receipt.TenantID, receipt.RunID, turn.TurnID); !errors.Is(err, run.ErrGuardExecutionAuthorityDenied) || got != (run.GuardExecutionAuthority{}) {
 		t.Fatalf("version-drifted breaker authority was returned: %+v err=%v", got, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE runtime_circuit_breakers
+		SET state='OPEN',version=1,updated_at=clock_timestamp()
+		WHERE scope_kind='RUN' AND scope_id=$1`, receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.GetTrustedGuardExecutionAuthority(ctx, receipt.TenantID, receipt.RunID, turn.TurnID); !errors.Is(err, run.ErrGuardExecutionAuthorityDenied) || got != (run.GuardExecutionAuthority{}) {
+		t.Fatalf("OPEN breaker authority was returned: %+v err=%v", got, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE runtime_circuit_breakers
+		SET state='CLOSED',version=1,updated_at=clock_timestamp()
+		WHERE scope_kind='RUN' AND scope_id=$1`, receipt.RunID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, "UPDATE runs SET status='CANCELLED',updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2::uuid", receipt.TenantID, receipt.RunID); err != nil {
 		t.Fatal(err)
