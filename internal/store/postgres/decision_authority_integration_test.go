@@ -121,6 +121,8 @@ func TestDecisionAuthorityRejectsBreakerVersionDrift(t *testing.T) {
 		t.Fatalf("valid initial authority unavailable: %+v err=%v", initial, err)
 	}
 
+	// Simulate a privileged owner bypassing the ordinary transition guard.
+	disableBreakerTransitionTrigger(t, pool)
 	if _, err := pool.Exec(ctx, `UPDATE runtime_circuit_breakers
 		SET version=2,updated_at=clock_timestamp()
 		WHERE scope_kind='RUN' AND scope_id=$1`, ref.RunID); err != nil {
