@@ -92,7 +92,6 @@ func TestDecisionAuthorityRejectsCancelledRun(t *testing.T) {
 	}
 }
 
-
 // A CLOSED breaker at initial epoch but a later version is not valid
 // generation-one execution authority. Privileged fixture SQL simulates a
 // damaged breaker row; supported breaker transitions always advance epochs.
