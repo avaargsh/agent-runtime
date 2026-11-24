@@ -72,6 +72,8 @@ func TestHarnessSessionCreationRejectsBreakerVersionDrift(t *testing.T) {
 					t.Fatalf("prepare claim before breaker drift: %+v err=%v", record, err)
 				}
 			}
+			// Simulate privileged DML that bypasses the ordinary transition guard.
+			disableBreakerTransitionTrigger(t, pool)
 			if _, err := pool.Exec(ctx, `
 				UPDATE runtime_circuit_breakers
 				SET version=version+1, updated_at=clock_timestamp()
