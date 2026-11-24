@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrTemporalTurnUntrustedRun  = errors.New("Runtime Run is not bound to an immutable ACP principal")
-	ErrTemporalExecutionConflict = errors.New("different Temporal execution attempted to own an existing Runtime Run")
+	ErrTemporalTurnUntrustedRun       = errors.New("Runtime Run is not bound to an immutable ACP principal")
+	ErrTemporalExecutionConflict      = errors.New("different Temporal execution attempted to own an existing Runtime Run")
+	ErrTemporalAttemptAuthorityMissing = errors.New("Runtime Temporal Attempt has no current authority generation")
 )
 
 // GetOrCreateTemporalTurn commits Runtime-owned RunAttempt/Turn identities
@@ -94,7 +95,7 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		return empty, fmt.Errorf("load canonical Runtime Run/ACP principal and breaker: %w", err)
 	}
 	if (persistedStatus != string(run.StatusQueued) && persistedStatus != string(run.StatusRunning)) ||
-		breakerState != "CLOSED" || breakerEpoch != 1 || breakerVersion < 1 {
+		breakerState != "CLOSED" || breakerEpoch != 1 || breakerVersion != 1 {
 		return empty, ErrTemporalTurnUntrustedRun
 	}
 
@@ -129,6 +130,7 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 	if err := rows.Err(); err != nil {
 		return empty, fmt.Errorf("read existing Runtime Temporal RunAttempt: %w", err)
 	}
+	var attemptGeneration int64
 	if attemptCount == 0 {
 		if persistedStatus != string(run.StatusQueued) && persistedStatus != string(run.StatusRunning) {
 			return empty, ErrTemporalTurnUntrustedRun
@@ -142,8 +144,41 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		if err != nil {
 			return empty, fmt.Errorf("persist Runtime Temporal RunAttempt: %w", err)
 		}
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s
+			(tenant_id, run_id, generation, run_attempt_id, temporal_execution_id, breaker_epoch)
+			VALUES ($1,$2::uuid,1,$3::uuid,$4::uuid,$5)
+		`, rel.authorities), tenantID, runID, attemptID, temporalExecutionID, breakerEpoch); err != nil {
+			return empty, fmt.Errorf("persist current Runtime Temporal Attempt authority: %w", err)
+		}
+		attemptGeneration = 1
 	} else if existingExecution != temporalExecutionID {
 		return empty, ErrTemporalExecutionConflict
+	} else {
+		var authorityBreakerEpoch int64
+		err = tx.QueryRow(ctx, fmt.Sprintf(`
+			SELECT authority.generation, authority.breaker_epoch
+			FROM %s authority
+			WHERE authority.tenant_id=$1 AND authority.run_id=$2::uuid
+			  AND authority.run_attempt_id=$3::uuid
+			  AND authority.temporal_execution_id=$4::uuid
+			  AND authority.generation = (
+				SELECT MAX(current_authority.generation)
+				FROM %s current_authority
+				WHERE current_authority.tenant_id=$1 AND current_authority.run_id=$2::uuid
+			  )
+			FOR SHARE
+		`, rel.authorities, rel.authorities), tenantID, runID, attemptID, temporalExecutionID).
+			Scan(&attemptGeneration, &authorityBreakerEpoch)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return empty, ErrTemporalAttemptAuthorityMissing
+		}
+		if err != nil {
+			return empty, fmt.Errorf("read current Runtime Temporal Attempt authority: %w", err)
+		}
+		if attemptGeneration < 1 || authorityBreakerEpoch != breakerEpoch {
+			return empty, ErrTemporalExecutionConflict
+		}
 	}
 
 	var turnID, invocationID string
@@ -177,6 +212,7 @@ func (s *Store) bindTemporalTurn(ctx context.Context, tx pgx.Tx, tenantID, runID
 		TemporalExecutionID: temporalExecutionID,
 		RunAttemptID:        attemptID, TurnID: turnID,
 		InvocationID: invocationID, TurnIndex: turnIndex,
+		AttemptGeneration: attemptGeneration, BreakerEpoch: breakerEpoch,
 	}
 	if err := identity.Validate(); err != nil {
 		return empty, err
