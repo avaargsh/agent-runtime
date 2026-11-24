@@ -77,21 +77,21 @@ func TestCircuitBreakerRejectsStateOnlyTransitionAtDatabaseBoundary(t *testing.T
 	}
 
 	// All supported state-machine transitions still pass through the DB fence.
-	opened, err := initial.Trip("UNAUTHORIZED_EGRESS", "event-supported-open", initial.UpdatedAt.Add(time.Second))
+	opened, err := initial.Trip("UNAUTHORIZED_EGRESS", "event-supported-open", initial.UpdatedAt.Add(time.Nanosecond))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.CompareAndSwapBreaker(ctx, initial.Version, opened); err != nil {
 		t.Fatalf("supported CLOSED to OPEN transition rejected: %v", err)
 	}
-	halfOpen, err := opened.BeginRecovery("approval-supported", opened.UpdatedAt.Add(time.Second))
+	halfOpen, err := opened.BeginRecovery("approval-supported", opened.UpdatedAt.Add(time.Nanosecond))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.CompareAndSwapBreaker(ctx, opened.Version, halfOpen); err != nil {
 		t.Fatalf("supported OPEN to HALF_OPEN transition rejected: %v", err)
 	}
-	recovered, err := halfOpen.CompleteRecovery("approval-supported", "evidence://breaker/recovery", halfOpen.UpdatedAt.Add(time.Second))
+	recovered, err := halfOpen.CompleteRecovery("approval-supported", "evidence://breaker/recovery", halfOpen.UpdatedAt.Add(time.Nanosecond))
 	if err != nil {
 		t.Fatal(err)
 	}
