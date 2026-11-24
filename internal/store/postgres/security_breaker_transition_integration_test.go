@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -157,5 +158,52 @@ func TestCircuitBreakerTransitionCatalogRejectsDisabledTrigger(t *testing.T) {
 	disableBreakerTransitionTrigger(t, pool)
 	if err := store.Migrate(context.Background()); err == nil {
 		t.Fatal("Runtime startup/migration accepted a disabled breaker transition trigger")
+	}
+}
+
+
+func requireBreakerTransitionViolation(t *testing.T, err error) {
+	t.Helper()
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("expected breaker integrity violation (SQLSTATE 23514), got %v", err)
+	}
+}
+
+func TestCircuitBreakerRowsCannotBeDeleted(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	scope := breaker.Scope{Kind: breaker.ScopeRun, ID: "run-breaker-delete-fence"}
+	initial, err := breaker.NewClosed(scope, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, 0, initial); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = pool.Exec(ctx, "DELETE FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$1", scope.ID)
+	requireBreakerTransitionViolation(t, err)
+	if _, err := store.GetBreaker(ctx, scope); err != nil {
+		t.Fatalf("rejected DELETE removed the durable breaker: %v", err)
+	}
+}
+
+func TestCircuitBreakerRowsCannotBeTruncated(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	scope := breaker.Scope{Kind: breaker.ScopeRun, ID: "run-breaker-truncate-fence"}
+	initial, err := breaker.NewClosed(scope, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, 0, initial); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = pool.Exec(ctx, "TRUNCATE runtime_circuit_breakers")
+	requireBreakerTransitionViolation(t, err)
+	if _, err := store.GetBreaker(ctx, scope); err != nil {
+		t.Fatalf("rejected TRUNCATE removed the durable breaker: %v", err)
 	}
 }
