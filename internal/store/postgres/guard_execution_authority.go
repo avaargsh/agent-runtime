@@ -127,13 +127,14 @@ func (s *Store) VerifyGuardExecutionAuthorityReadOnlyRole(ctx context.Context) e
 			AND NOT has_schema_privilege(current_user,current_schema(),'CREATE')
 			AND NOT has_database_privilege(current_user,current_database(),'CREATE')
 			AND NOT EXISTS (
-				SELECT 1 FROM pg_roles role
-				WHERE role.rolname=current_user
-				  AND (role.rolsuper OR role.rolcreatedb OR role.rolcreaterole OR role.rolreplication OR role.rolbypassrls)
+				SELECT 1 FROM pg_roles db_role
+				WHERE db_role.rolname=current_user
+				  AND (db_role.rolsuper OR db_role.rolcreatedb OR db_role.rolcreaterole OR db_role.rolreplication OR db_role.rolbypassrls)
 			)
 			AND NOT EXISTS (
-				SELECT 1 FROM pg_auth_members membership
-				WHERE membership.member=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+				SELECT 1 FROM pg_roles granted_role
+				WHERE granted_role.rolname<>current_user
+				  AND pg_has_role(current_user,granted_role.rolname,'MEMBER')
 			)
 			AND count(*)=6
 			AND bool_and(

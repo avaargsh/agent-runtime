@@ -26,7 +26,7 @@ The dedicated process reads:
 - `RUNTIME_GUARD_AUTHORITY_TENANT`: one explicitly provisioned tenant.
 - `RUNTIME_GUARD_AUTHORITY_LISTEN_ADDR`: optional listener address; defaults to `:8446` (all pod interfaces).
 
-The process sets `default_transaction_read_only=on` and does not run migrations. This is defense in depth, not a substitute for a database role that lacks INSERT/UPDATE/DELETE/TRUNCATE/DDL privileges. Do not reuse the ACP or Decision database credentials.
+The process sets `default_transaction_read_only=on`, verifies SELECT-only access to the six authority relations, rejects DML/TRUNCATE/DDL privileges, elevated role attributes and role memberships at startup, and does not run migrations. Do not reuse the ACP or Decision database credentials.
 
 ## Consumer obligations
 

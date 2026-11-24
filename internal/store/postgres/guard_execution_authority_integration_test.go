@@ -203,9 +203,16 @@ func TestGuardExecutionAuthorityWorksWithSelectOnlyDatabaseRole(t *testing.T) {
 	if err := readOnlyPool.QueryRow(ctx, "SHOW transaction_read_only").Scan(&readOnly); err != nil || readOnly != "on" {
 		t.Fatalf("Guard DB role transaction_read_only=%q err=%v", readOnly, err)
 	}
-	got, err := postgres.New(readOnlyPool).GetTrustedGuardExecutionAuthority(ctx, receipt.TenantID, receipt.RunID, turn.TurnID)
+	readOnlyStore := postgres.New(readOnlyPool)
+	if err := readOnlyStore.VerifyGuardExecutionAuthorityReadOnlyRole(ctx); err != nil {
+		t.Fatalf("SELECT-only Guard role rejected: %v", err)
+	}
+	got, err := readOnlyStore.GetTrustedGuardExecutionAuthority(ctx, receipt.TenantID, receipt.RunID, turn.TurnID)
 	if err != nil || got.RunAttemptID == "" || got.TurnID != turn.TurnID {
 		t.Fatalf("SELECT-only role could not read Guard authority: %+v err=%v", got, err)
+	}
+	if err := postgres.New(pool).VerifyGuardExecutionAuthorityReadOnlyRole(ctx); !errors.Is(err, postgres.ErrGuardAuthorityDBRoleNotReadOnly) {
+		t.Fatalf("writer/superuser role passed Guard read-only startup check: %v", err)
 	}
 	if _, err := readOnlyPool.Exec(ctx,
 		"UPDATE runs SET status='CANCELLED' WHERE tenant_id=$1 AND run_id=$2::uuid",
