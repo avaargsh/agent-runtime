@@ -725,3 +725,39 @@ func TestHarnessCreationAndDispatchCannotRaceUncommittedBreakerTrip(t *testing.T
 		})
 	}
 }
+
+func TestHarnessClaimReadRejectsInvalidPersistedConfirmedSessionID(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		sessionID string
+	}{
+		{"embedded-newline", "session\n1"},
+		{"oversized-utf8", strings.Repeat("会", 86)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool, store, claim := harnessFixture(t)
+			ctx := context.Background()
+			if _, err := store.ClaimHarnessSession(ctx, claim); err != nil {
+				t.Fatal(err)
+			}
+			if ok, err := store.BeginHarnessSessionDispatch(ctx, claim); err != nil || !ok {
+				t.Fatalf("dispatch: %t %v", ok, err)
+			}
+			// A malformed persisted reply can satisfy the database's character
+			// length/transition constraints without satisfying the Go byte
+			// length and identifier contract. Do not disable any triggers.
+			if _, err := pool.Exec(ctx, `UPDATE runtime_harness_session_claims
+				SET state='CONFIRMED', agent_session_id=$3, updated_at=now()
+				WHERE tenant_id=$1 AND run_id=$2::uuid`,
+				claim.TenantID, claim.RunID, tc.sessionID); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := store.ReadHarnessSessionClaim(ctx, claim); !errors.Is(err, acp.ErrBindingInvalid) || got.AgentSessionID != "" {
+				t.Fatalf("invalid persisted session promoted to confirmed evidence: %+v err=%v", got, err)
+			}
+			if got, err := store.LookupBinding(ctx, claim.TenantID, claim.RunID); !errors.Is(err, acp.ErrBindingInvalid) || got.Confirmed {
+				t.Fatalf("invalid persisted session exposed as binding: %+v err=%v", got, err)
+			}
+		})
+	}
+}
