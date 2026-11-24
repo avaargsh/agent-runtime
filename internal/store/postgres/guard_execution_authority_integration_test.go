@@ -143,7 +143,7 @@ func TestGuardExecutionAuthorityWorksWithSelectOnlyDatabaseRole(t *testing.T) {
 		"CREATE ROLE %s LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION",
 		roleIdent, password,
 	)); err != nil {
-		t.Skipf("TEST_DATABASE_URL cannot create a least-privilege database role: %v", err)
+		t.Fatalf("TEST_DATABASE_URL cannot create a least-privilege database role: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), "DROP OWNED BY "+roleIdent)
