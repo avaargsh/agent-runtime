@@ -105,8 +105,22 @@ func verifyHarnessClaimCatalog(ctx context.Context, db harnessCatalogReader) err
 // complete body must match pg_proc.prosrc; merely checking function names,
 // object types or marker substrings is insufficient.
 func harnessMigrationFunctionSource(migration string, functionName string) (string, error) {
-	startTag := "CREATE FUNCTION " + functionName + "() RETURNS trigger\nLANGUAGE plpgsql AS $body$"
-	if strings.Count(migration, startTag) != 1 {
+	startTags := []string{
+		"CREATE FUNCTION " + functionName + "() RETURNS trigger\nLANGUAGE plpgsql AS $body$",
+		"CREATE OR REPLACE FUNCTION " + functionName + "() RETURNS trigger\nLANGUAGE plpgsql AS $body$",
+	}
+	startTag := ""
+	for _, candidate := range startTags {
+		if strings.Count(migration, candidate) == 1 {
+			if startTag != "" {
+				return "", errors.New("expected exactly one versioned trigger definition")
+			}
+			startTag = candidate
+		} else if strings.Count(migration, candidate) > 1 {
+			return "", errors.New("expected exactly one versioned trigger definition")
+		}
+	}
+	if startTag == "" {
 		return "", errors.New("expected exactly one versioned trigger definition")
 	}
 	offset := strings.Index(migration, startTag) + len(startTag)

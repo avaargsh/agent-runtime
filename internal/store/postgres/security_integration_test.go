@@ -110,6 +110,7 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 		"DROP TABLE runtime_current_attempts",
 		"DROP TRIGGER runtime_circuit_breaker_transition ON runtime_circuit_breakers",
 		"DROP FUNCTION enforce_runtime_circuit_breaker_transition()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 15",
 		"DELETE FROM runtime_schema_migrations WHERE version = 14",
 		"DELETE FROM runtime_schema_migrations WHERE version = 13",
 		"DROP TABLE runtime_decision_acceptances",
@@ -160,8 +161,8 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT max(version) FROM runtime_schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 14 {
-		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 14", version)
+	if version != 15 {
+		t.Fatalf("migration version after v4-to-latest upgrade = %d, want 15", version)
 	}
 	if _, err := pool.Exec(ctx, `TRUNCATE runtime_security_audit_events`); err == nil {
 		t.Fatal("previously applied v4 database still permits audit TRUNCATE")
@@ -471,6 +472,7 @@ func TestSecurityMigrationV4RollsBackAtomically(t *testing.T) {
 	for _, statement := range []string{
 		"DROP TRIGGER runtime_circuit_breaker_transition ON runtime_circuit_breakers",
 		"DROP FUNCTION enforce_runtime_circuit_breaker_transition()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 15",
 		"DELETE FROM runtime_schema_migrations WHERE version = 14",
 		"DROP TRIGGER runs_create_initial_breaker ON runs",
 		"DROP FUNCTION create_initial_run_breaker()",

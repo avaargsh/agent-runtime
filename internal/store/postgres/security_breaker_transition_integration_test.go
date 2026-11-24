@@ -102,6 +102,35 @@ func TestCircuitBreakerRejectsStateOnlyTransitionAtDatabaseBoundary(t *testing.T
 		final.State != breaker.StateClosed || final.Epoch != 4 || final.Version != 4 {
 		t.Fatalf("supported recovery did not persist: %+v err=%v", final, err)
 	}
+
+	// A failed recovery probe may reopen the breaker. This remains a legal
+	// HALF_OPEN->OPEN transition even when all timestamps collapse to the
+	// same PostgreSQL microsecond; epoch/version provide the strict ordering.
+	trippedAgain, err := recovered.Trip("RECOVERY_FAILED", "event-recovery-failed", recovered.UpdatedAt.Add(time.Nanosecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, recovered.Version, trippedAgain); err != nil {
+		t.Fatalf("supported second CLOSED to OPEN transition rejected: %v", err)
+	}
+	halfOpenAgain, err := trippedAgain.BeginRecovery("approval-supported-again", trippedAgain.UpdatedAt.Add(time.Nanosecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, trippedAgain.Version, halfOpenAgain); err != nil {
+		t.Fatalf("supported second OPEN to HALF_OPEN transition rejected: %v", err)
+	}
+	reopened, err := halfOpenAgain.Trip("RECOVERY_FAILED", "event-recovery-failed-again", halfOpenAgain.UpdatedAt.Add(time.Nanosecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, halfOpenAgain.Version, reopened); err != nil {
+		t.Fatalf("supported HALF_OPEN to OPEN transition rejected at PostgreSQL timestamp precision: %v", err)
+	}
+	if final, err := store.GetBreaker(ctx, scope); err != nil ||
+		final.State != breaker.StateOpen || final.Epoch != 7 || final.Version != 7 {
+		t.Fatalf("reopened breaker did not persist: %+v err=%v", final, err)
+	}
 }
 
 type breakerTransitionTestDB interface {
