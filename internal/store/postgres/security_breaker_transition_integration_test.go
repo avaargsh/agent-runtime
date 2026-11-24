@@ -209,7 +209,6 @@ func TestCircuitBreakerRowsCannotBeTruncated(t *testing.T) {
 	}
 }
 
-
 // disableBreakerDeleteTrigger simulates privileged row deletion in isolated
 // consumer fail-closed tests. Ordinary Runtime writers cannot disable triggers.
 func disableBreakerDeleteTrigger(t *testing.T, db breakerTransitionTestDB) func() {
