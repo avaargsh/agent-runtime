@@ -31,7 +31,7 @@ func verifyCircuitBreakerTransitionCatalog(ctx context.Context, db harnessCatalo
 			  AND rel.relname='runtime_circuit_breakers'
 			  AND rel.relkind='r' AND rel.relpersistence='p'
 			  AND tg.tgname='runtime_circuit_breaker_transition'
-			  AND NOT tg.tgisinternal AND tg.tgenabled='A' AND tg.tgtype=19
+			  AND NOT tg.tgisinternal AND tg.tgenabled='A' AND tg.tgtype=23
 			  AND tg.tgqual IS NULL AND tg.tgattr::text=''
 			  AND tg.tgnargs=0 AND tg.tgconstraint=0
 			  AND fn.pronamespace=rel_ns.oid
