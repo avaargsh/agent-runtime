@@ -16,7 +16,7 @@ func TestReadConfigRequiresDedicatedGuardIdentityAndTenant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.addr != "127.0.0.1:8446" || cfg.peer != values["RUNTIME_GUARD_AUTHORITY_PEER_SPIFFE_ID"] || cfg.tenant != "tenant-1" {
+	if cfg.addr != ":8446" || cfg.peer != values["RUNTIME_GUARD_AUTHORITY_PEER_SPIFFE_ID"] || cfg.tenant != "tenant-1" {
 		t.Fatalf("wrong Guard authority config: %+v", cfg)
 	}
 	delete(values, "RUNTIME_GUARD_AUTHORITY_PEER_SPIFFE_ID")
