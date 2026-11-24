@@ -1,5 +1,5 @@
--- v14 makes the durable breaker state machine a database-enforced invariant.
--- This is additive: v4 and all previously applied migrations remain unchanged.
+-- v15 corrects the HALF_OPEN-to-OPEN timestamp precision check.
+-- The v14 trigger and its catalog identity remain unchanged; only its function body is replaced.
 CREATE OR REPLACE FUNCTION enforce_runtime_circuit_breaker_transition() RETURNS trigger
 LANGUAGE plpgsql AS $body$
 BEGIN
@@ -72,10 +72,3 @@ BEGIN
     RETURN NEW;
 END;
 $body$;
-
-CREATE TRIGGER runtime_circuit_breaker_transition
-BEFORE INSERT OR UPDATE ON runtime_circuit_breakers
-FOR EACH ROW EXECUTE FUNCTION enforce_runtime_circuit_breaker_transition();
-
-ALTER TABLE runtime_circuit_breakers
-    ENABLE ALWAYS TRIGGER runtime_circuit_breaker_transition;
