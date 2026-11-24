@@ -57,6 +57,14 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 			AND EXISTS (SELECT 1 FROM %s AS b
 				WHERE b.scope_kind='RUN' AND b.scope_id=r.run_id::text
 				AND b.state='CLOSED' AND b.epoch=1 AND b.version=1)
+			AND EXISTS (SELECT 1 FROM %s AS current_authority
+				WHERE current_authority.tenant_id=r.tenant_id AND current_authority.run_id=r.run_id
+				AND current_authority.run_attempt_id=a.run_attempt_id
+				AND current_authority.temporal_execution_id=a.temporal_execution_id
+				AND current_authority.breaker_epoch=1
+				AND current_authority.generation=(
+					SELECT MAX(latest_authority.generation) FROM %s AS latest_authority
+					WHERE latest_authority.tenant_id=r.tenant_id AND latest_authority.run_id=r.run_id))
 		FROM %s AS c
 		JOIN %s AS r ON r.tenant_id=c.tenant_id AND r.run_id=c.run_id
 			AND r.agent_release_id=c.agent_release_id
@@ -68,7 +76,7 @@ func (s *Store) LookupBinding(ctx context.Context, tenantID, runID string) (acp.
 			AND a.run_attempt_id=c.attempt_id AND a.workflow_id=r.workflow_id
 		WHERE c.tenant_id=$1 AND c.run_id=$2::uuid
 			AND c.state='CONFIRMED' AND c.agent_session_id IS NOT NULL
-	`, attemptTable, relations.breakers, claimTable, runTable, principalTable, attemptTable), tenantID, runID).
+	`, attemptTable, relations.breakers, relations.authorities, relations.authorities, claimTable, runTable, principalTable, attemptTable), tenantID, runID).
 		Scan(&binding.TenantID, &binding.RunID, &binding.RunStatus, &binding.AttemptID,
 			&binding.HarnessInstanceID, &binding.AgentSessionID, &binding.WorkingDir, &binding.RecoveryEligible)
 	if errors.Is(err, pgx.ErrNoRows) {
