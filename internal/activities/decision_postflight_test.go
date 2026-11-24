@@ -149,3 +149,30 @@ func TestInvokeDecisionRejectsBreakerVersionDriftAfterTemporalTurnBinding(t *tes
 			client.calls, store.callCount())
 	}
 }
+
+
+// The breaker may change after preflight but before a fast Decision response,
+// beating the periodic watcher. The postflight read must still be pinned to
+// the persisted Turn's original version and reject the returned result.
+func TestInvokeDecisionRejectsBreakerVersionDriftBeforeFirstPoll(t *testing.T) {
+	closed := closedRunBreaker(t)
+	drifted := closed
+	drifted.Version = 2
+	store := &fakeBreakerStore{records: []breaker.Record{closed}}
+	activity := Activities{
+		Breakers: store,
+		Client:   flipBreakerBeforeReturn{store: store, next: drifted},
+		Runs:     testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution: &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+		PollInterval:  time.Hour,
+	}
+	_, err := activity.InvokeDecision(context.Background(), activityTurn())
+	var appErr *temporal.ApplicationError
+	if !errors.As(err, &appErr) || appErr.Type() != "RUN_BREAKER_BLOCKED" || !appErr.NonRetryable() {
+		t.Fatalf("post-preflight breaker version drift accepted, got %v (want non-retryable RUN_BREAKER_BLOCKED)", err)
+	}
+	if calls := store.callCount(); calls < 2 {
+		t.Fatalf("breaker state checked only %d time(s), want preflight and postflight", calls)
+	}
+}
