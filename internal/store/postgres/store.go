@@ -321,6 +321,29 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := verifyDecisionAcceptanceCatalog(ctx, tx); err != nil {
 		return err
 	}
+	// v13 records generation-one authority only for newly created Attempts.
+	// No historical Attempt is backfilled or promoted by this migration.
+	var v13Applied bool
+	if err := tx.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM runtime_schema_migrations WHERE version = 13)",
+	).Scan(&v13Applied); err != nil {
+		return fmt.Errorf("read current Attempt migration ledger: %w", err)
+	}
+	if !v13Applied {
+		script, err := migrationFiles.ReadFile("migrations/0013_runtime_current_attempts.up.sql")
+		if err != nil {
+			return fmt.Errorf("read current Attempt migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply current Attempt migration: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO runtime_schema_migrations (version) VALUES (13)"); err != nil {
+			return fmt.Errorf("record current Attempt migration: %w", err)
+		}
+	}
+	if err := verifyCurrentAttemptCatalog(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit schema migration: %w", err)
 	}
