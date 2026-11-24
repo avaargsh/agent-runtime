@@ -54,7 +54,7 @@ BEGIN
                 USING ERRCODE = '23514';
         END IF;
     ELSIF OLD.state = 'HALF_OPEN' AND NEW.state = 'OPEN' THEN
-        IF NEW.opened_at IS NULL OR NEW.opened_at <= OLD.updated_at
+        IF NEW.opened_at IS NULL OR NEW.opened_at < OLD.updated_at
            OR NEW.recovery_approval_id <> ''
            OR NEW.last_recovery_evidence_ref IS DISTINCT FROM OLD.last_recovery_evidence_ref THEN
             RAISE EXCEPTION 'Runtime circuit breaker reopen metadata is invalid'
