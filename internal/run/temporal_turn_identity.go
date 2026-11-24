@@ -19,6 +19,8 @@ type TemporalTurnIdentity struct {
 	TurnID              string
 	InvocationID        string
 	TurnIndex           int32
+	AttemptGeneration   int64
+	BreakerEpoch        int64
 }
 
 func (i TemporalTurnIdentity) Validate() error {
@@ -30,7 +32,8 @@ func (i TemporalTurnIdentity) Validate() error {
 	}
 	if i.TenantID == "" || len(i.TenantID) > 255 ||
 		i.WorkflowID != ACPWorkflowPrefix+i.RunID ||
-		i.InvocationID != i.TurnID || i.TurnIndex < 1 || i.TurnIndex > 10000 {
+		i.InvocationID != i.TurnID || i.TurnIndex < 1 || i.TurnIndex > 10000 ||
+		i.AttemptGeneration < 1 || i.BreakerEpoch < 1 {
 		return fmt.Errorf("%w: inconsistent Runtime execution binding", ErrInvalidIdentity)
 	}
 	return nil
