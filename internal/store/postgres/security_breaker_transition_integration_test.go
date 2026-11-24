@@ -159,3 +159,53 @@ func TestCircuitBreakerTransitionCatalogRejectsDisabledTrigger(t *testing.T) {
 		t.Fatal("Runtime startup/migration accepted a disabled breaker transition trigger")
 	}
 }
+
+
+func requireBreakerMutationBlocked(t *testing.T, err error) {
+	t.Helper()
+	pgErr, ok := err.(*pgconn.PgError)
+	if !ok || pgErr.Code != "23514" {
+		t.Fatalf("expected breaker mutation rejection (SQLSTATE 23514), got %v", err)
+	}
+}
+
+func TestCircuitBreakerRowsCannotBeDeleted(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	scope := breaker.Scope{Kind: breaker.ScopeRun, ID: "run-breaker-delete-red"}
+	initial, err := breaker.NewClosed(scope, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, 0, initial); err != nil {
+		t.Fatalf("create initial breaker: %v", err)
+	}
+
+	_, err = pool.Exec(ctx,
+		"DELETE FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$1",
+		scope.ID,
+	)
+	requireBreakerMutationBlocked(t, err)
+	if _, err := store.GetBreaker(ctx, scope); err != nil {
+		t.Fatalf("rejected DELETE removed durable breaker: %v", err)
+	}
+}
+
+func TestCircuitBreakerRowsCannotBeTruncated(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	scope := breaker.Scope{Kind: breaker.ScopeRun, ID: "run-breaker-truncate-red"}
+	initial, err := breaker.NewClosed(scope, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompareAndSwapBreaker(ctx, 0, initial); err != nil {
+		t.Fatalf("create initial breaker: %v", err)
+	}
+
+	_, err = pool.Exec(ctx, "TRUNCATE runtime_circuit_breakers")
+	requireBreakerMutationBlocked(t, err)
+	if _, err := store.GetBreaker(ctx, scope); err != nil {
+		t.Fatalf("rejected TRUNCATE removed durable breaker: %v", err)
+	}
+}
