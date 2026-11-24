@@ -5,14 +5,14 @@ import (
 	"fmt"
 )
 
-// verifyCircuitBreakerTransitionCatalog attests the exact v14 state-machine
+// verifyCircuitBreakerTransitionCatalog attests the exact v15 state-machine
 // trigger even on databases where the migration ledger already records v14.
 // This is a point-in-time startup check, not protection against a privileged
 // owner changing the catalog after startup.
 func verifyCircuitBreakerTransitionCatalog(ctx context.Context, db harnessCatalogReader) error {
-	migration, err := migrationFiles.ReadFile("migrations/0014_runtime_circuit_breaker_transition_guard.up.sql")
+	migration, err := migrationFiles.ReadFile("migrations/0015_runtime_circuit_breaker_reopen_precision.up.sql")
 	if err != nil {
-		return fmt.Errorf("circuit breaker catalog: read v14 migration: %w", err)
+		return fmt.Errorf("circuit breaker catalog: read v15 migration: %w", err)
 	}
 	expected, err := harnessMigrationFunctionSource(string(migration), "enforce_runtime_circuit_breaker_transition")
 	if err != nil {
