@@ -113,6 +113,10 @@ func (s *Store) VerifyGuardExecutionAuthorityReadOnlyRole(ctx context.Context) e
 	if _, _, _, _, err := s.harnessRelations(); err != nil {
 		return ErrGuardAuthorityDBRoleNotReadOnly
 	}
+	schema := s.pool.Config().ConnConfig.RuntimeParams["search_path"]
+	if schema == "" {
+		schema = "public"
+	}
 	var valid bool
 	err := s.pool.QueryRow(ctx, `
 		WITH required(relname) AS (
@@ -123,11 +127,21 @@ func (s *Store) VerifyGuardExecutionAuthorityReadOnlyRole(ctx context.Context) e
 				('runtime_current_attempts'),
 				('runtime_decision_turns'),
 				('runtime_circuit_breakers')
+		),
+		persistent_tables AS (
+			SELECT c.relname
+			FROM pg_catalog.pg_class c
+			JOIN pg_catalog.pg_namespace ns ON ns.oid=c.relnamespace
+			WHERE ns.nspname=$1
+			  AND c.relname IN (SELECT relname FROM required)
+			  AND c.relkind='r' AND c.relpersistence='p'
 		)
 		SELECT
-			current_setting('default_transaction_read_only')='on'
-			AND current_schema() IS NOT NULL
-			AND NOT has_schema_privilege(current_user,current_schema(),'CREATE')
+			current_setting('search_path')=$1
+			AND current_schema()=$1
+			AND has_schema_privilege(current_user,$1,'USAGE')
+			AND current_setting('default_transaction_read_only')='on'
+			AND NOT has_schema_privilege(current_user,$1,'CREATE')
 			AND NOT has_database_privilege(current_user,current_database(),'CREATE')
 			AND NOT EXISTS (
 				SELECT 1 FROM pg_roles db_role
@@ -139,18 +153,19 @@ func (s *Store) VerifyGuardExecutionAuthorityReadOnlyRole(ctx context.Context) e
 				WHERE granted_role.rolname<>current_user
 				  AND pg_has_role(current_user,granted_role.rolname,'MEMBER')
 			)
+			AND (SELECT count(*) FROM persistent_tables)=6
 			AND count(*)=6
 			AND bool_and(
-				has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'SELECT')
-				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'INSERT')
-				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'UPDATE')
-				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'DELETE')
-				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'TRUNCATE')
-				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'REFERENCES')
-				AND NOT has_table_privilege(current_user,format('%I.%I',current_schema(),relname),'TRIGGER')
+				has_table_privilege(current_user,format('%I.%I',$1,relname),'SELECT')
+				AND NOT has_table_privilege(current_user,format('%I.%I',$1,relname),'INSERT')
+				AND NOT has_table_privilege(current_user,format('%I.%I',$1,relname),'UPDATE')
+				AND NOT has_table_privilege(current_user,format('%I.%I',$1,relname),'DELETE')
+				AND NOT has_table_privilege(current_user,format('%I.%I',$1,relname),'TRUNCATE')
+				AND NOT has_table_privilege(current_user,format('%I.%I',$1,relname),'REFERENCES')
+				AND NOT has_table_privilege(current_user,format('%I.%I',$1,relname),'TRIGGER')
 			)
 		FROM required
-	`).Scan(&valid)
+	`).Scan(&valid, schema)
 	if err != nil || !valid {
 		return ErrGuardAuthorityDBRoleNotReadOnly
 	}
