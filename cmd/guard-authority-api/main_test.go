@@ -4,12 +4,12 @@ import "testing"
 
 func TestReadConfigRequiresDedicatedGuardIdentityAndTenant(t *testing.T) {
 	values := map[string]string{
-		"RUNTIME_GUARD_AUTHORITY_DATABASE_URL": "postgres://runtime_guard@localhost/runtime",
-		"RUNTIME_GUARD_AUTHORITY_TLS_CERT": "server.pem",
-		"RUNTIME_GUARD_AUTHORITY_TLS_KEY": "server.key",
-		"RUNTIME_GUARD_AUTHORITY_CLIENT_CA": "guard-ca.pem",
+		"RUNTIME_GUARD_AUTHORITY_DATABASE_URL":   "postgres://runtime_guard@localhost/runtime",
+		"RUNTIME_GUARD_AUTHORITY_TLS_CERT":       "server.pem",
+		"RUNTIME_GUARD_AUTHORITY_TLS_KEY":        "server.key",
+		"RUNTIME_GUARD_AUTHORITY_CLIENT_CA":      "guard-ca.pem",
 		"RUNTIME_GUARD_AUTHORITY_PEER_SPIFFE_ID": "spiffe://example.org/ns/guard/sa/issuer",
-		"RUNTIME_GUARD_AUTHORITY_TENANT": "tenant-1",
+		"RUNTIME_GUARD_AUTHORITY_TENANT":         "tenant-1",
 	}
 	get := func(key string) string { return values[key] }
 	cfg, err := readConfig(get)
