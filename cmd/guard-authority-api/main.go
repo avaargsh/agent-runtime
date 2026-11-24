@@ -138,6 +138,6 @@ func main() {
 		log.Fatal(err)
 	}
 	if err := serve(ctx, c); err != nil {
-		log.Fatal("Runtime Guard authority service stopped")
+		log.Fatalf("Runtime Guard authority service stopped: %v", err)
 	}
 }
