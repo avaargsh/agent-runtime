@@ -44,8 +44,8 @@ func fixtureAuthority() run.DecisionAuthority {
 	id := "11111111-1111-4111-8111-111111111111"
 	turn := "55555555-5555-4555-8555-555555555555"
 	return run.DecisionAuthority{
-		SchemaVersion:     run.DecisionAuthoritySchema,
-		TenantID:          "tenant-1", RunID: id,
+		SchemaVersion: run.DecisionAuthoritySchema,
+		TenantID:      "tenant-1", RunID: id,
 		RunIntentID:       "22222222-2222-4222-8222-222222222222",
 		RequestDigest:     "sha256:" + strings.Repeat("a", 64),
 		WorkflowID:        "agent-run/v1/" + id,
@@ -53,11 +53,11 @@ func fixtureAuthority() run.DecisionAuthority {
 		AttemptID:         "44444444-4444-4444-8444-444444444444",
 		AttemptGeneration: 1,
 		TurnID:            turn, InvocationID: turn,
-		AgentID:           "agent-1", AgentReleaseID: "release-1", SessionID: "session-1",
-		ProjectID:         "project-1", SubjectID: "subject-1", ActorID: "subject-1",
-		PolicyRevision:    "policy-1", ConfigDigest: "sha256:" + strings.Repeat("b", 64),
-		InputDigest:       "sha256:" + strings.Repeat("c", 64),
-		Phase:             run.DecisionWaitingAuthority, Status: "RUNNING", BreakerState: "CLOSED",
+		AgentID: "agent-1", AgentReleaseID: "release-1", SessionID: "session-1",
+		ProjectID: "project-1", SubjectID: "subject-1", ActorID: "subject-1",
+		PolicyRevision: "policy-1", ConfigDigest: "sha256:" + strings.Repeat("b", 64),
+		InputDigest: "sha256:" + strings.Repeat("c", 64),
+		Phase:       run.DecisionWaitingAuthority, Status: "RUNNING", BreakerState: "CLOSED",
 		BreakerEpoch: 1, BreakerVersion: 1,
 	}
 }
