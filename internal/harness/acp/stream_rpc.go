@@ -320,6 +320,17 @@ func decodeUniqueStreamEnvelope(raw []byte, out *streamEnvelope) error {
 					return err
 				}
 			}
+			// Classify response envelopes by field presence, not decoded values.
+			// Even null or empty request-only fields make a response ambiguous.
+			if depth == 0 {
+				_, method := seen["method"]
+				_, params := seen["params"]
+				_, result := seen["result"]
+				_, rpcError := seen["error"]
+				if (result || rpcError) && (method || params) {
+					return errors.New("mixed Agent request and response envelope")
+				}
+			}
 			end, err := decoder.Token()
 			if err != nil || end != json.Delim('}') {
 				return errors.New("invalid Agent JSON object terminator")
