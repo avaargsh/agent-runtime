@@ -161,7 +161,7 @@ func Assess(m Manifest, r Report) (Assessment, error) {
 			return zero, fmt.Errorf("malformed evidence reference")
 		}
 		if _, duplicate := evidence[e.ID]; duplicate {
-			return zero, fmt.Errorf("duplicate evidence id %q", e.ID)
+			return zero, fmt.Errorf("duplicate evidence id")
 		}
 		evidence[e.ID] = struct{}{}
 	}
@@ -170,12 +170,15 @@ func Assess(m Manifest, r Report) (Assessment, error) {
 	failed := false
 	incomplete := false
 	for _, check := range r.Checks {
+		if !boundedNonBlank(check.ID, maxIdentityBytes) {
+			return zero, fmt.Errorf("malformed reported check id")
+		}
 		if len(check.EvidenceIDs) > maxEvidenceCount ||
 			(check.Reason != "" && !boundedNonBlank(check.Reason, maxReasonBytes)) {
-			return zero, fmt.Errorf("check %q has oversized or malformed fields", check.ID)
+			return zero, fmt.Errorf("reported check has oversized or malformed fields")
 		}
 		if _, ok := required[check.ID]; !ok {
-			return zero, fmt.Errorf("unknown or blank check id %q", check.ID)
+			return zero, fmt.Errorf("unknown reported check id")
 		}
 		if _, duplicate := observed[check.ID]; duplicate {
 			return zero, fmt.Errorf("duplicate check id %q", check.ID)
@@ -188,18 +191,21 @@ func Assess(m Manifest, r Report) (Assessment, error) {
 		case CheckNotRun, CheckSkipped, CheckInconclusive:
 			incomplete = true
 		default:
-			return zero, fmt.Errorf("unsupported check status %q", check.Status)
+			return zero, fmt.Errorf("unsupported check status")
 		}
 		if check.Status != CheckPassed && !nonBlank(check.Reason) {
 			return zero, fmt.Errorf("non-passing check %q requires a reason", check.ID)
 		}
 		used := make(map[string]struct{}, len(check.EvidenceIDs))
 		for _, id := range check.EvidenceIDs {
+			if !boundedNonBlank(id, maxIdentityBytes) {
+				return zero, fmt.Errorf("malformed check evidence id")
+			}
 			if _, duplicate := used[id]; duplicate {
-				return zero, fmt.Errorf("check %q references evidence %q twice", check.ID, id)
+				return zero, fmt.Errorf("check %q references evidence twice", check.ID)
 			}
 			if _, exists := evidence[id]; !exists {
-				return zero, fmt.Errorf("check %q references unknown evidence %q", check.ID, id)
+				return zero, fmt.Errorf("check %q references unknown evidence", check.ID)
 			}
 			used[id] = struct{}{}
 		}
