@@ -47,7 +47,7 @@ func readDecisionAuthority(ctx context.Context, q checkpointQueryer, rel checkpo
 	var input []byte
 	query := fmt.Sprintf(`
 		SELECT r.tenant_id, r.run_id::text, r.run_intent_id::text, r.source_request_digest,
-		       r.workflow_id, c.execution_id::text, c.attempt_id::text, c.turn_id::text,
+		       r.workflow_id, c.execution_id::text, c.attempt_id::text, aa.generation, c.turn_id::text,
 		       t.invocation_id::text, r.agent_id, r.agent_release_id, r.session_id,
 		       p.project_id, p.subject_id, p.actor_id, p.policy_revision, p.config_digest,
 		       c.input_digest, c.phase, r.status, b.state, b.epoch, b.version,
@@ -65,21 +65,30 @@ func readDecisionAuthority(ctx context.Context, q checkpointQueryer, rel checkpo
 		  AND t.run_attempt_id=a.run_attempt_id AND t.turn_id=c.turn_id
 		  AND t.invocation_id=t.turn_id AND t.turn_index=1
 		JOIN %s b ON b.scope_kind='RUN' AND b.scope_id=r.run_id::text
+		JOIN %s aa ON aa.tenant_id=r.tenant_id AND aa.run_id=r.run_id
+		  AND aa.run_attempt_id=a.run_attempt_id
+		  AND aa.temporal_execution_id=a.temporal_execution_id
+		  AND aa.breaker_epoch=b.epoch
 		WHERE r.tenant_id=$1 AND r.run_id=$2::uuid AND t.invocation_id=$3::uuid
 		  AND r.status='RUNNING' AND b.state='CLOSED'
+		  AND aa.generation = (
+		    SELECT MAX(current_authority.generation)
+		    FROM %s current_authority
+		    WHERE current_authority.tenant_id=r.tenant_id AND current_authority.run_id=r.run_id
+		  )
 		  AND c.phase='WAITING_AUTHORITY' AND p.actor_id=p.subject_id
 		  AND NOT EXISTS (
 		    SELECT 1 FROM %s AS other_attempt
 		    WHERE other_attempt.tenant_id=r.tenant_id AND other_attempt.run_id=r.run_id
 		      AND other_attempt.run_attempt_id<>a.run_attempt_id
 		  )
-	`, rel.runs, rel.principals, rel.checkpoints, rel.attempts, rel.turns, rel.breakers, rel.attempts)
+	`, rel.runs, rel.principals, rel.checkpoints, rel.attempts, rel.turns, rel.breakers, rel.authorities, rel.authorities, rel.attempts)
 	if lock {
 		query += " FOR UPDATE OF r FOR SHARE OF b"
 	}
 	err := q.QueryRow(ctx, query, tenant, runID, invocationID).Scan(
 		&a.TenantID, &a.RunID, &a.RunIntentID, &a.RequestDigest, &a.WorkflowID,
-		&a.ExecutionID, &a.AttemptID, &a.TurnID, &a.InvocationID, &a.AgentID, &a.AgentReleaseID, &a.SessionID,
+		&a.ExecutionID, &a.AttemptID, &a.AttemptGeneration, &a.TurnID, &a.InvocationID, &a.AgentID, &a.AgentReleaseID, &a.SessionID,
 		&a.ProjectID, &a.SubjectID, &a.ActorID, &a.PolicyRevision, &a.ConfigDigest,
 		&a.InputDigest, &a.Phase, &a.Status, &a.BreakerState, &a.BreakerEpoch, &a.BreakerVersion,
 		&principal.Version, &principal.IssuerSPIFFEID, &input)
