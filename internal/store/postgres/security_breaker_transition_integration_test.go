@@ -160,7 +160,6 @@ func TestCircuitBreakerTransitionCatalogRejectsDisabledTrigger(t *testing.T) {
 	}
 }
 
-
 func requireBreakerMutationBlocked(t *testing.T, err error) {
 	t.Helper()
 	pgErr, ok := err.(*pgconn.PgError)
@@ -207,5 +206,51 @@ func TestCircuitBreakerRowsCannotBeTruncated(t *testing.T) {
 	requireBreakerMutationBlocked(t, err)
 	if _, err := store.GetBreaker(ctx, scope); err != nil {
 		t.Fatalf("rejected TRUNCATE removed durable breaker: %v", err)
+	}
+}
+
+
+// disableBreakerDeleteTrigger simulates privileged row deletion in isolated
+// consumer fail-closed tests. Ordinary Runtime writers cannot disable triggers.
+func disableBreakerDeleteTrigger(t *testing.T, db breakerTransitionTestDB) func() {
+	t.Helper()
+	if _, err := db.Exec(context.Background(), "ALTER TABLE runtime_circuit_breakers DISABLE TRIGGER runtime_circuit_breaker_no_delete"); err != nil {
+		t.Fatalf("disable breaker delete trigger for privileged fixture: %v", err)
+	}
+	restored := false
+	restore := func() {
+		if restored {
+			return
+		}
+		restored = true
+		if _, err := db.Exec(context.Background(), "ALTER TABLE runtime_circuit_breakers ENABLE ALWAYS TRIGGER runtime_circuit_breaker_no_delete"); err != nil {
+			t.Errorf("restore breaker delete trigger: %v", err)
+		}
+	}
+	t.Cleanup(restore)
+	return restore
+}
+
+func TestCircuitBreakerRetentionCatalogRejectsDisabledOrReplacedGuards(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"delete guard disabled", "ALTER TABLE runtime_circuit_breakers DISABLE TRIGGER runtime_circuit_breaker_no_delete"},
+		{"truncate guard disabled", "ALTER TABLE runtime_circuit_breakers DISABLE TRIGGER runtime_circuit_breaker_no_truncate"},
+		{"delete guard missing", "DROP TRIGGER runtime_circuit_breaker_no_delete ON runtime_circuit_breakers"},
+		{"truncate guard missing", "DROP TRIGGER runtime_circuit_breaker_no_truncate ON runtime_circuit_breakers"},
+		{"retention function replaced", "CREATE OR REPLACE FUNCTION reject_runtime_circuit_breaker_mutation() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NULL; END;'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pool, store := newTestStore(t)
+			if _, err := pool.Exec(context.Background(), tc.sql); err != nil {
+				t.Fatalf("prepare catalog drift: %v", err)
+			}
+			if err := store.Migrate(context.Background()); err == nil {
+				t.Fatalf("Runtime startup/migration accepted breaker retention catalog drift: %s", tc.name)
+			}
+		})
 	}
 }
