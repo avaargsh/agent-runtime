@@ -53,6 +53,9 @@ func readOnlyPoolConfig(dsn string) (*pgxpool.Config, error) {
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = make(map[string]string)
 	}
+	if cfg.ConnConfig.RuntimeParams["search_path"] == "" {
+		cfg.ConnConfig.RuntimeParams["search_path"] = "public"
+	}
 	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	cfg.MaxConns = 8
 	return cfg, nil
