@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 const MaxACPFrameBytes = 1 << 20
@@ -239,6 +240,11 @@ func (s *StreamRPC) readLoop() {
 // before encoding/json's last-value-wins struct decoding. An untrusted Agent
 // must not turn duplicate response IDs/results into a confirmed RPC ACK.
 func decodeUniqueStreamEnvelope(raw []byte, out *streamEnvelope) error {
+	// encoding/json replaces malformed UTF-8 with U+FFFD rather than
+	// rejecting it. Validate original bytes before any lossy decoding.
+	if !utf8.Valid(raw) {
+		return errors.New("invalid UTF-8 in Agent JSON-RPC envelope")
+	}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return errors.New("Agent JSON-RPC envelope must be an object")
@@ -395,9 +401,9 @@ func (s *StreamRPC) handleAgentReply(message streamEnvelope) error {
 	// JSON-RPC 2.0 requires exactly one of result and error. An absent,
 	// null or contradictory response cannot be promoted to a successful
 	// Agent ACK. Retire the stream so later calls cannot rely on its state.
-	hasResult := len(message.Result) > 0 && string(message.Result) != "null"
-	hasError := len(message.Error) > 0 && string(message.Error) != "null"
-	if hasResult == hasError {
+	hasResult := len(message.Result) > 0
+	hasError := len(message.Error) > 0
+	if hasResult == hasError || string(message.Result) == "null" || string(message.Error) == "null" {
 		return fmt.Errorf("%w: malformed or ambiguous Agent response", ErrRPCStreamClosed)
 	}
 	id, err := strconv.ParseInt(string(message.ID), 10, 64)

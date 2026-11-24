@@ -221,6 +221,9 @@ func TestStreamRPCDuplicateTopLevelACKFieldsFailClosed(t *testing.T) {
 		frame string
 	}{
 		{"duplicate-result", `{"jsonrpc":"2.0","id":__ID__,"result":{},"result":{}}`},
+		{"invalid-utf8", "{\"jsonrpc\":\"2.0\",\"id\":__ID__,\"result\":{\"metadata\":\"\xff\"}}"},
+		{"result-with-null-error", `{"jsonrpc":"2.0","id":__ID__,"result":{},"error":null}`},
+		{"null-result-with-error", `{"jsonrpc":"2.0","id":__ID__,"result":null,"error":{"code":-32000,"message":"failed"}}`},
 		{"duplicate-id", `{"jsonrpc":"2.0","id":__ID__,"id":__ID__,"result":{}}`},
 		{"duplicate-version", `{"jsonrpc":"2.0","jsonrpc":"2.0","id":__ID__,"result":{}}`},
 		{"nested-duplicate-version", `{"jsonrpc":"2.0","id":__ID__,"result":{"protocolVersion":2,"protocolVersion":1}}`},
