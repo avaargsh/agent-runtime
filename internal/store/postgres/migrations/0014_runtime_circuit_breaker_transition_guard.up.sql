@@ -3,6 +3,15 @@
 CREATE FUNCTION enforce_runtime_circuit_breaker_transition() RETURNS trigger
 LANGUAGE plpgsql AS $body$
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.state <> 'CLOSED' OR NEW.epoch <> 1 OR NEW.version <> 1
+           OR NEW.last_recovery_evidence_ref <> '' THEN
+            RAISE EXCEPTION 'Runtime circuit breaker must be created CLOSED at epoch/version one'
+                USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
+
     IF NEW.scope_kind IS DISTINCT FROM OLD.scope_kind
        OR NEW.scope_id IS DISTINCT FROM OLD.scope_id THEN
         RAISE EXCEPTION 'Runtime circuit breaker scope is immutable'
@@ -65,7 +74,7 @@ END;
 $body$;
 
 CREATE TRIGGER runtime_circuit_breaker_transition
-BEFORE UPDATE ON runtime_circuit_breakers
+BEFORE INSERT OR UPDATE ON runtime_circuit_breakers
 FOR EACH ROW EXECUTE FUNCTION enforce_runtime_circuit_breaker_transition();
 
 ALTER TABLE runtime_circuit_breakers
