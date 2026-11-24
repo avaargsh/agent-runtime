@@ -55,7 +55,7 @@ func (s *fakeStore) LookupBinding(_ context.Context, _, _ string) (Binding, erro
 }
 
 func confirmedBinding() Binding {
-	return Binding{TenantID: "tenant-a", RunID: "run-1", RunStatus: "RUNNING", AttemptID: "attempt-1", HarnessInstanceID: "worker-codex-1", AgentSessionID: "agent-session-1", WorkingDir: "/workspace", Confirmed: true}
+	return Binding{TenantID: "tenant-a", RunID: "run-1", RunStatus: "RUNNING", RecoveryEligible: true, AttemptID: "attempt-1", HarnessInstanceID: "worker-codex-1", AgentSessionID: "agent-session-1", WorkingDir: "/workspace", Confirmed: true}
 }
 
 func readyClient(t *testing.T, load bool) (*Client, *fakeRPC, *fakeStore) {
@@ -114,6 +114,7 @@ func TestRecoverUsesOnlyCommittedTenantBoundBinding(t *testing.T) {
 		mutate func(*Binding)
 	}{
 		{"unconfirmed", func(b *Binding) { b.Confirmed = false }},
+		{"unproven-recovery", func(b *Binding) { b.RecoveryEligible = false }},
 		{"cross-tenant", func(b *Binding) { b.TenantID = "tenant-b" }},
 		{"wrong-run", func(b *Binding) { b.RunID = "run-2" }},
 		{"missing-session", func(b *Binding) { b.AgentSessionID = "" }},
