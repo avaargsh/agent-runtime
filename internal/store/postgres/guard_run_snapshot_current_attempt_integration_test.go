@@ -54,3 +54,59 @@ func TestTrustedGuardRunSafetyRequiresCurrentAttemptAndMatchingBreakerEpoch(t *t
 		t.Fatalf("trusted Guard read accepted stale Attempt after breaker epoch changed: %v", err)
 	}
 }
+
+// V8 permits multiple immutable Attempts for a Run. The v13 generation-one
+// pointer is not an authorization shortcut when a second persisted Attempt
+// makes the identity ambiguous. This must fail closed before Guard admission
+// without deleting historical evidence or changing the diagnostic reader.
+func TestTrustedGuardRunSafetyRejectsAmbiguousPersistedAttempt(t *testing.T) {
+	pool, store := newTestStore(t)
+	ctx := context.Background()
+	receipt, err := store.AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		"UPDATE runs SET status='RUNNING',updated_at=now() WHERE tenant_id=$1 AND run_id=$2::uuid",
+		receipt.TenantID, receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.GetOrCreateTemporalTurn(ctx, receipt.TenantID, receipt.RunID,
+		receipt.WorkflowID, firstTemporalExecutionID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial, err := store.GetTrustedGuardRunSafetySnapshot(ctx, receipt.TenantID, receipt.RunID); err != nil || !initial.EligibleForGuardSubmission() {
+		t.Fatalf("single current Attempt should pass the Guard precondition: %+v err=%v", initial, err)
+	}
+
+	// Fixture SQL simulates an inconsistent durable second execution; it is
+	// never a public command to allocate or authorize another Attempt.
+	if _, err := pool.Exec(ctx, `INSERT INTO runtime_run_attempts
+		(tenant_id,run_id,run_attempt_id,workflow_id,temporal_execution_id)
+		VALUES ($1,$2::uuid,$3::uuid,$4,$5::uuid)`,
+		receipt.TenantID, receipt.RunID, "33333333-3333-4333-8333-333333333332",
+		receipt.WorkflowID, secondTemporalExecutionID); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := store.GetTrustedGuardRunSafetySnapshot(ctx, receipt.TenantID, receipt.RunID); !errors.Is(err, run.ErrInvalidIdentity) || result.EligibleForGuardSubmission() {
+		t.Fatalf("ambiguous persisted Attempts passed trusted Guard safety: %+v err=%v", result, err)
+	}
+	if diagnostic, err := store.GetGuardRunSafetySnapshot(ctx, receipt.TenantID, receipt.RunID); err != nil || diagnostic.Status != run.StatusRunning {
+		t.Fatalf("diagnostic historical Run projection changed: %+v err=%v", diagnostic, err)
+	}
+	var attempts, pointers, turns int
+	var authority string
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM runtime_run_attempts WHERE tenant_id=$1 AND run_id=$2::uuid),
+			(SELECT count(*) FROM runtime_current_attempts WHERE tenant_id=$1 AND run_id=$2::uuid),
+			(SELECT count(*) FROM runtime_decision_turns WHERE tenant_id=$1 AND run_id=$2::uuid),
+			(SELECT attempt_id::text FROM runtime_current_attempts WHERE tenant_id=$1 AND run_id=$2::uuid)`,
+		receipt.TenantID, receipt.RunID).Scan(&attempts, &pointers, &turns, &authority); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || pointers != 1 || turns != 1 || authority != current.RunAttemptID {
+		t.Fatalf("read-only rejection changed historical identity: attempts=%d pointers=%d turns=%d pointer=%s", attempts, pointers, turns, authority)
+	}
+}
