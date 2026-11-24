@@ -242,7 +242,6 @@ func nonRetryableRunIdentityError(cause error) error {
 	)
 }
 
-
 // checkBoundRunBreaker keeps every preflight, in-flight and postflight read
 // pinned to the breaker fence captured in the persisted Temporal Turn. A
 // fresh breaker read must never rebase an old Turn onto a newer recovery
