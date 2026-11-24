@@ -149,8 +149,8 @@ func TestDecisionAuthorityRejectsBreakerVersionDrift(t *testing.T) {
 		(SELECT count(*) FROM runtime_current_attempts WHERE tenant_id=$1 AND run_id=$2::uuid),
 		(SELECT count(*) FROM runtime_decision_checkpoints WHERE tenant_id=$1 AND run_id=$2::uuid),
 		(SELECT count(*) FROM runtime_decision_acceptances WHERE tenant_id=$1 AND run_id=$2::uuid),
-		(SELECT epoch FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$2),
-		(SELECT version FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$2)
+		(SELECT epoch FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$2::text),
+		(SELECT version FROM runtime_circuit_breakers WHERE scope_kind='RUN' AND scope_id=$2::text)
 	`, ref.TenantID, ref.RunID).Scan(&attempts, &pointers, &checkpoints, &acceptances, &epoch, &version); err != nil {
 		t.Fatal(err)
 	}
