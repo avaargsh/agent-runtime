@@ -331,10 +331,10 @@ func TestTemporalTurnRejectsUnsupportedCurrentAttemptGeneration(t *testing.T) {
 		t.Fatalf("persist post-startup generation drift: %v", err)
 	}
 
-	if got, err := store.GetOrCreateTemporalTurn(ctx, ref.TenantID, ref.RunID, ref.WorkflowID, firstTemporalExecutionID, 2); err == nil || got != (run.TemporalTurnIdentity{}) {
+	if got, err := store.GetOrCreateTemporalTurn(ctx, ref.TenantID, ref.RunID, ref.WorkflowID, firstTemporalExecutionID, 2); !errors.Is(err, postgres.ErrTemporalExecutionConflict) || got != (run.TemporalTurnIdentity{}) {
 		t.Fatalf("unsupported generation created a new Temporal Turn: %+v err=%v", got, err)
 	}
-	if got, err := store.PrepareAcceptedDecision(ctx, ref, firstTemporalExecutionID); err == nil || got != (run.DecisionCheckpoint{}) {
+	if got, err := store.PrepareAcceptedDecision(ctx, ref, firstTemporalExecutionID); !errors.Is(err, postgres.ErrTemporalExecutionConflict) || got != (run.DecisionCheckpoint{}) {
 		t.Fatalf("unsupported generation replayed a business checkpoint: %+v err=%v", got, err)
 	}
 
