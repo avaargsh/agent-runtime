@@ -108,6 +108,9 @@ func TestSecurityAuditTruncateGuardUpgradesPreviouslyAppliedV4(t *testing.T) {
 	// v7 and v6 schema elements before reapplying their migrations.
 	for _, sql := range []string{
 		"DROP TABLE runtime_current_attempts",
+		"DROP TRIGGER runtime_circuit_breaker_transition ON runtime_circuit_breakers",
+		"DROP FUNCTION enforce_runtime_circuit_breaker_transition()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 14",
 		"DELETE FROM runtime_schema_migrations WHERE version = 13",
 		"DROP TABLE runtime_decision_acceptances",
 		"DELETE FROM runtime_schema_migrations WHERE version = 12",
@@ -466,6 +469,9 @@ func TestSecurityMigrationV4RollsBackAtomically(t *testing.T) {
 	// Return the isolated schema to the v3 shape, then install a conflicting
 	// breaker relation so migration v4 fails after creating its audit objects.
 	for _, statement := range []string{
+		"DROP TRIGGER runtime_circuit_breaker_transition ON runtime_circuit_breakers",
+		"DROP FUNCTION enforce_runtime_circuit_breaker_transition()",
+		"DELETE FROM runtime_schema_migrations WHERE version = 14",
 		"DROP TRIGGER runs_create_initial_breaker ON runs",
 		"DROP FUNCTION create_initial_run_breaker()",
 		"DROP TABLE runtime_circuit_breakers",
