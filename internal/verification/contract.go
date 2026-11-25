@@ -172,10 +172,10 @@ func Assess(m Manifest, r Report) (Assessment, error) {
 	incomplete := false
 	totalEvidenceRefs := 0
 	for _, check := range r.Checks {
-		totalEvidenceRefs += len(check.EvidenceIDs)
-		if totalEvidenceRefs > maxTotalEvidenceRefs {
+		if len(check.EvidenceIDs) > maxTotalEvidenceRefs-totalEvidenceRefs {
 			return zero, fmt.Errorf("verification report exceeds aggregate evidence reference bound")
 		}
+		totalEvidenceRefs += len(check.EvidenceIDs)
 		if !boundedNonBlank(check.ID, maxIdentityBytes) {
 			return zero, fmt.Errorf("malformed reported check id")
 		}
