@@ -17,19 +17,19 @@ func TestValidateStartupConfig(t *testing.T) {
 			wantError: "DECISION_PLUGIN_URL is required",
 		},
 		{
-			name:        "rejects invalid Decision endpoint before checking database",
-			endpoint:    "http://example.com",
-			wantError:   "DECISION_PLUGIN_URL: plaintext decision endpoint must be loopback",
+			name:      "rejects invalid Decision endpoint before checking database",
+			endpoint:  "http://example.com",
+			wantError: "DECISION_PLUGIN_URL: plaintext decision endpoint must be loopback",
 		},
 		{
-			name:        "rejects malformed Decision endpoint before checking database",
-			endpoint:    "file:///tmp/decision",
-			wantError:   "DECISION_PLUGIN_URL: invalid decision endpoint",
+			name:      "rejects malformed Decision endpoint before checking database",
+			endpoint:  "file:///tmp/decision",
+			wantError: "DECISION_PLUGIN_URL: invalid decision endpoint",
 		},
 		{
-			name:        "requires database after valid Decision endpoint",
-			endpoint:    "https://decision.example.com/v1/decision-turns",
-			wantError:   "DATABASE_URL is required for Run breaker enforcement",
+			name:      "requires database after valid Decision endpoint",
+			endpoint:  "https://decision.example.com/v1/decision-turns",
+			wantError: "DATABASE_URL is required for Run breaker enforcement",
 		},
 		{
 			name:        "accepts HTTPS endpoint and database configuration",
