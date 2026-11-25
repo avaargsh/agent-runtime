@@ -15,11 +15,12 @@ const Version = "verification/v1"
 // These limits bound the work and memory consumed by unauthenticated report
 // content before any future persistence or toolchain integration.
 const (
-	maxIdentityBytes    = 256
-	maxCheckCount       = 256
-	maxEvidenceCount    = 1024
-	maxEvidenceURIBytes = 2048
-	maxReasonBytes      = 1024
+	maxIdentityBytes     = 256
+	maxCheckCount        = 256
+	maxEvidenceCount     = 1024
+	maxTotalEvidenceRefs = 4096
+	maxEvidenceURIBytes  = 2048
+	maxReasonBytes       = 1024
 )
 
 type CheckStatus string
@@ -169,7 +170,12 @@ func Assess(m Manifest, r Report) (Assessment, error) {
 	observed := make(map[string]CheckStatus, len(r.Checks))
 	failed := false
 	incomplete := false
+	totalEvidenceRefs := 0
 	for _, check := range r.Checks {
+		if len(check.EvidenceIDs) > maxTotalEvidenceRefs-totalEvidenceRefs {
+			return zero, fmt.Errorf("verification report exceeds aggregate evidence reference bound")
+		}
+		totalEvidenceRefs += len(check.EvidenceIDs)
 		if !boundedNonBlank(check.ID, maxIdentityBytes) {
 			return zero, fmt.Errorf("malformed reported check id")
 		}

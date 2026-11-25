@@ -26,6 +26,8 @@ The manifest also requires a nonempty, unique, ordered `required_check_ids` list
 
 A report consists of `checks` and `evidence`. Evidence refs are `id`, `uri`, and lowercase `sha256`. PASS and FAIL need at least one valid referenced EvidenceRef; non-PASS requires a reason. Results do not contain caller-supplied `overall_status`.
 
+The pure assessment applies hard resource bounds before producing a verdict: at most 256 required/reported checks, 1,024 EvidenceRefs, 1,024 references per Check, and 4,096 check-to-evidence references across the entire Report. A single EvidenceRef may support multiple Checks, but reuse still counts toward the aggregate edge limit. Identity and reason strings are capped at 256 and 1,024 bytes respectively; EvidenceRef URIs are capped at 2,048 bytes. Exceeding any bound is a contract error with no verdict. These limits bound assessment work; they do not authenticate the manifest or prove evidence provenance.
+
 ## Deterministic verdicts
 
 | Observation | Pure contract verdict |
