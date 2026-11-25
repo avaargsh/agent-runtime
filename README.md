@@ -22,6 +22,30 @@ The Runtime does not implement a workflow engine or a generic Agent Framework.
 - [Decision ↔ Runtime ↔ EngageGuard integration contract](docs/architecture/DECISION-INTEGRATION-CONTRACT.md)
 - [Agent Execution Safety RFC](docs/architecture/AGENT-EXECUTION-SAFETY-RFC.md)
 
+## Go toolchain for local verification
+
+[`go.mod`](go.mod) declares Go 1.26.0 as the module minimum. The
+[Go test workflow](.github/workflows/go-tests.yml) pins and checks Go 1.26.11
+for repository verification. For comparable local checks, select Go 1.26.11
+and run from a clean checkout:
+
+```sh
+export GOTOOLCHAIN=local
+test "$(go env GOVERSION)" = "go1.26.11"
+go mod verify
+go mod tidy
+git diff --exit-code -- go.mod go.sum
+go test -race -count=1 ./...
+go vet ./...
+test -z "$(gofmt -l cmd internal)"
+```
+
+A pass using another SDK is not a reproduction of the pinned CI toolchain.
+Tests requiring external services still need the isolated setup in the
+[reliability acceptance guide](docs/RELIABILITY-ACCEPTANCE.md). In particular,
+local tests without `TEST_DATABASE_URL` do not replace the PostgreSQL 17
+integration job.
+
 ## Worker runtime configuration
 
 The Temporal Worker requires:
