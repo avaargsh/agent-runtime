@@ -61,7 +61,8 @@ func main() {
 		Principals:    store,
 		Execution:     activities.ServerTemporalExecutionResolver{},
 		TemporalTurns: store,
-		PollInterval:  250 * time.Millisecond,
+		PollInterval:       250 * time.Millisecond,
+		BreakerReadTimeout: 250 * time.Millisecond,
 	})
 	if err := w.Run(worker.InterruptCh()); err != nil {
 		log.Fatal(err)
