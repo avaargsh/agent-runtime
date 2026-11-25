@@ -30,7 +30,7 @@ The Temporal Worker requires:
 - `DATABASE_URL`: the Runtime PostgreSQL database used for durable Run breaker state and security audit. Worker startup verifies connectivity and applies the versioned Runtime migrations.
 - `TEMPORAL_ADDRESS`: optional Temporal frontend address; defaults to `127.0.0.1:7233`.
 
-Before each Decision HTTP call, the Activity reads the owning Tenant's Run breaker. While the request is in flight, it polls the same Run breaker epoch every 250 ms. OPEN, stale epoch, missing state or PostgreSQL uncertainty cancels the request and returns a non-retryable Activity error.
+Before each Decision HTTP call, the Activity reads the owning Tenant's Run breaker. While the request is in flight, it polls the same Run breaker epoch every 250 ms. Every preflight, polling and postflight database read has a 250 ms context deadline; a timed-out read is treated as breaker-store uncertainty. OPEN, stale epoch, missing state or PostgreSQL uncertainty cancels the request and returns a non-retryable Activity error. With the default 250 ms poll interval and 250 ms read deadline, an unresponsive store is detected within approximately one poll interval plus one read deadline (about 500 ms, excluding scheduler and transport cancellation latency).
 
 The current Worker calls a remote Decision HTTP plugin and does not spawn a local Agent process or shell. This guard therefore cancels the in-flight HTTP request; process-group, cgroup or container termination belongs to a future local sandbox runtime.
 

@@ -209,3 +209,64 @@ func TestInvokeDecisionRejectsHalfOpenStateWithoutNewBreakerFence(t *testing.T) 
 			client.calls, store.callCount())
 	}
 }
+
+// A breaker database read that never returns is uncertainty, not permission
+// to keep a Decision request in flight. The Activity must bound each read and
+// cancel the remote request when the read deadline expires.
+type blockingBreakerReader struct {
+	record      breaker.Record
+	pollStarted chan struct{}
+	calls       int
+}
+
+func (s *blockingBreakerReader) GetRunBreaker(ctx context.Context, _, _ string) (breaker.Record, error) {
+	s.calls++
+	if s.calls == 1 {
+		return s.record, nil
+	}
+	if s.calls == 2 {
+		close(s.pollStarted)
+	}
+	<-ctx.Done()
+	return breaker.Record{}, ctx.Err()
+}
+
+func TestInvokeDecisionCancelsInFlightRequestWhenBreakerReadTimesOut(t *testing.T) {
+	store := &blockingBreakerReader{
+		record:      closedRunBreaker(t),
+		pollStarted: make(chan struct{}),
+	}
+	client := &fakeDecisionInvoker{started: make(chan struct{})}
+	activity := Activities{
+		Client: client, Breakers: store, Runs: testRunIdentityReader(), Principals: testPrincipalReader(),
+		Execution:     &fixedTemporalExecutionResolver{execution: temporalTestExecution()},
+		TemporalTurns: &fixedTemporalTurnWriter{identity: temporalTestTurnIdentity()},
+		PollInterval:  time.Millisecond,
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := activity.InvokeDecision(context.Background(), activityTurn())
+		result <- err
+	}()
+
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("Decision request did not start")
+	}
+	select {
+	case <-store.pollStarted:
+	case <-time.After(time.Second):
+		t.Fatal("breaker polling did not start")
+	}
+	select {
+	case err := <-result:
+		var appErr *temporal.ApplicationError
+		if !errors.As(err, &appErr) || appErr.Type() != "RUN_BREAKER_BLOCKED" || !appErr.NonRetryable() {
+			t.Fatalf("blocked breaker read returned %v, want non-retryable RUN_BREAKER_BLOCKED", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Decision request remained in flight while the breaker database read was blocked")
+	}
+}

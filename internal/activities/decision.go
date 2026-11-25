@@ -13,6 +13,8 @@ import (
 	"go.temporal.io/sdk/temporal"
 )
 
+const defaultBreakerReadTimeout = 250 * time.Millisecond
+
 var (
 	ErrBreakerGuardUnavailable = errors.New("Run breaker guard is unavailable")
 	ErrRunIdentityUnavailable  = errors.New("trusted Run identity resolver is unavailable")
@@ -37,13 +39,14 @@ type RunPrincipalReader interface {
 }
 
 type Activities struct {
-	Client        DecisionInvoker
-	Breakers      BreakerReader
-	Runs          RunIdentityReader
-	Principals    RunPrincipalReader
-	Execution     TemporalExecutionResolver
-	TemporalTurns TemporalTurnWriter
-	PollInterval  time.Duration
+	Client             DecisionInvoker
+	Breakers           BreakerReader
+	Runs               RunIdentityReader
+	Principals         RunPrincipalReader
+	Execution          TemporalExecutionResolver
+	TemporalTurns      TemporalTurnWriter
+	PollInterval       time.Duration
+	BreakerReadTimeout time.Duration
 }
 
 // InvokeDecision resolves canonical identity from the Runtime Run store before
@@ -128,7 +131,7 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 	}
 	ctx = securitycontext.WithContext(ctx, trustedContext)
 
-	initial, err := a.Breakers.GetRunBreaker(ctx, identity.TenantID, identity.RunID)
+	initial, err := a.readRunBreaker(ctx, identity.TenantID, identity.RunID)
 	if err != nil {
 		return empty, nonRetryableBreakerError(fmt.Errorf("load Run breaker before Decision egress: %w", err))
 	}
@@ -155,7 +158,7 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 			case <-watchCtx.Done():
 				return
 			case <-ticker.C:
-				current, err := a.Breakers.GetRunBreaker(watchCtx, identity.TenantID, identity.RunID)
+				current, err := a.readRunBreaker(watchCtx, identity.TenantID, identity.RunID)
 				if err != nil {
 					if watchCtx.Err() != nil {
 						return
@@ -194,7 +197,7 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 	}
 	// Fast replies may beat the first periodic poll. Revalidate the breaker
 	// fencing epoch using the persisted Runtime Run identity after egress.
-	postflight, err := a.Breakers.GetRunBreaker(ctx, identity.TenantID, identity.RunID)
+	postflight, err := a.readRunBreaker(ctx, identity.TenantID, identity.RunID)
 	if err != nil {
 		return empty, nonRetryableBreakerError(fmt.Errorf("load Run breaker after Decision egress: %w", err))
 	}
@@ -208,6 +211,16 @@ func (a *Activities) InvokeDecision(ctx context.Context, turn decision.Turn) (de
 		return empty, err
 	}
 	return result, nil
+}
+
+func (a *Activities) readRunBreaker(ctx context.Context, tenantID, runID string) (breaker.Record, error) {
+	timeout := a.BreakerReadTimeout
+	if timeout <= 0 {
+		timeout = defaultBreakerReadTimeout
+	}
+	readCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return a.Breakers.GetRunBreaker(readCtx, tenantID, runID)
 }
 
 func nonRetryableBreakerError(cause error) error {
