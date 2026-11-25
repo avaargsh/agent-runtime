@@ -17,12 +17,9 @@ import (
 
 func main() {
 	endpoint := os.Getenv("DECISION_PLUGIN_URL")
-	if endpoint == "" {
-		log.Fatal("DECISION_PLUGIN_URL is required")
-	}
 	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required for Run breaker enforcement")
+	if err := validateStartupConfig(endpoint, databaseURL); err != nil {
+		log.Fatal(err)
 	}
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 15*time.Second)

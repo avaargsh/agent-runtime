@@ -91,7 +91,7 @@ func TestRejectRedirect(t *testing.T) {
 
 func TestInvalidEndpoint(t *testing.T) {
 	for _, endpoint := range []string{"http://example.org/api/v1/decision-turns", "file:///tmp/x", "http://user:secret@localhost:8081/", "https://example.org/x?token=secret"} {
-		if err := validateEndpoint(endpoint); err == nil {
+		if err := ValidateEndpoint(endpoint); err == nil {
 			t.Fatalf("accepted: %s", endpoint)
 		}
 	}

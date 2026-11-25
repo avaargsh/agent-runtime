@@ -50,7 +50,8 @@ type Client struct {
 	Audit     audit.Recorder
 }
 
-func validateEndpoint(endpoint string) error {
+// ValidateEndpoint checks a configured Decision endpoint without connecting to it.
+func ValidateEndpoint(endpoint string) error {
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("invalid decision endpoint")
@@ -84,7 +85,7 @@ func (c Client) Invoke(ctx context.Context, turn Turn, identity run.Identity) (R
 	if c.Protector == nil {
 		return result, ErrDataProtectionUnavailable
 	}
-	if err := validateEndpoint(c.Endpoint); err != nil {
+	if err := ValidateEndpoint(c.Endpoint); err != nil {
 		return result, err
 	}
 	trustedContext, ok := securitycontext.FromContext(ctx)
