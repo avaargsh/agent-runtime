@@ -20,6 +20,9 @@ func main() {
 	if endpoint == "" {
 		log.Fatal("DECISION_PLUGIN_URL is required")
 	}
+	if err := decision.ValidateEndpoint(endpoint); err != nil {
+		log.Fatalf("DECISION_PLUGIN_URL: %v", err)
+	}
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		log.Fatal("DATABASE_URL is required for Run breaker enforcement")
