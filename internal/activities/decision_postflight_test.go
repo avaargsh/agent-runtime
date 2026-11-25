@@ -210,7 +210,6 @@ func TestInvokeDecisionRejectsHalfOpenStateWithoutNewBreakerFence(t *testing.T) 
 	}
 }
 
-
 // A breaker database read that never returns is uncertainty, not permission
 // to keep a Decision request in flight. The Activity must bound each read and
 // cancel the remote request when the read deadline expires.
