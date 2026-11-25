@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestAssessRejectsExcessiveAggregateEvidenceReferences(t *testing.T) {
+func aggregateEvidenceFixture(totalReferences int) (Manifest, Report) {
 	manifest, report := fixture()
-	const evidenceCount = 1024
-	const checkCount = 5
+	evidenceCount := maxEvidenceCount
+	checkCount := (totalReferences + evidenceCount - 1) / evidenceCount
 
 	manifest.RequiredCheckIDs = make([]string, checkCount)
 	report.Checks = make([]Check, checkCount)
@@ -26,26 +26,40 @@ func TestAssessRejectsExcessiveAggregateEvidenceReferences(t *testing.T) {
 		}
 	}
 
+	remaining := totalReferences
 	for i := 0; i < checkCount; i++ {
 		checkID := fmt.Sprintf("check-%d", i)
 		manifest.RequiredCheckIDs[i] = checkID
+		referenceCount := remaining
+		if referenceCount > evidenceCount {
+			referenceCount = evidenceCount
+		}
 		report.Checks[i] = Check{
-			ID:     checkID,
-			Status: CheckPassed,
+			ID:          checkID,
+			Status:      CheckPassed,
+			EvidenceIDs: append([]string(nil), evidenceIDs[:referenceCount]...),
 		}
-		if i < 4 {
-			report.Checks[i].EvidenceIDs = append([]string(nil), evidenceIDs...)
-			continue
-		}
-		// 4*1024 + 1 = 4097 aggregate references. Every reference is
-		// valid and unique within its Check; the same evidence may support
-		// more than one independent check.
-		report.Checks[i].EvidenceIDs = []string{evidenceIDs[0]}
+		remaining -= referenceCount
 	}
+	return manifest, report
+}
 
+func TestAssessAcceptsAggregateEvidenceReferencesAtLimit(t *testing.T) {
+	manifest, report := aggregateEvidenceFixture(maxTotalEvidenceRefs)
+	assessment, err := Assess(manifest, report)
+	if err != nil {
+		t.Fatalf("Assess rejected the aggregate reference limit: %v", err)
+	}
+	if assessment.Verdict != VerdictPassed {
+		t.Fatalf("Assess verdict = %q, want %q", assessment.Verdict, VerdictPassed)
+	}
+}
+
+func TestAssessRejectsExcessiveAggregateEvidenceReferences(t *testing.T) {
+	manifest, report := aggregateEvidenceFixture(maxTotalEvidenceRefs + 1)
 	assessment, err := Assess(manifest, report)
 	if err == nil {
-		t.Fatalf("Assess accepted %d aggregate evidence references: %+v", 4*evidenceCount+1, assessment)
+		t.Fatalf("Assess accepted %d aggregate evidence references: %+v", maxTotalEvidenceRefs+1, assessment)
 	}
 	if assessment.Verdict != "" || len(assessment.MissingRequired) != 0 {
 		t.Fatalf("rejected report returned a partial verdict: %+v", assessment)
