@@ -39,12 +39,12 @@ type RunPrincipalReader interface {
 }
 
 type Activities struct {
-	Client        DecisionInvoker
-	Breakers      BreakerReader
-	Runs          RunIdentityReader
-	Principals    RunPrincipalReader
-	Execution     TemporalExecutionResolver
-	TemporalTurns TemporalTurnWriter
+	Client             DecisionInvoker
+	Breakers           BreakerReader
+	Runs               RunIdentityReader
+	Principals         RunPrincipalReader
+	Execution          TemporalExecutionResolver
+	TemporalTurns      TemporalTurnWriter
 	PollInterval       time.Duration
 	BreakerReadTimeout time.Duration
 }
