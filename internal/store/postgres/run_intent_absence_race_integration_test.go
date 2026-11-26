@@ -79,6 +79,10 @@ func TestLookupIntentDuringUncommittedAcceptanceDoesNotClaimFinalAbsence(t *test
 		t.Fatalf("pre-commit lookup must be uncertain, got: %v", err)
 	}
 
+	if receipt, err := store.LookupIntentWithPrincipal(ctx, testIntent(), trustedSnapshot()); !errors.Is(err, run.ErrIntentNotFound) || receipt != (run.IntentReceipt{}) {
+		t.Fatalf("principal-bound pre-commit lookup must return uncertain absence without a receipt: %+v %v", receipt, err)
+	}
+
 	if err := blocker.Commit(ctx); err != nil {
 		t.Fatalf("release outbox lock: %v", err)
 	}
@@ -97,6 +101,11 @@ func TestLookupIntentDuringUncommittedAcceptanceDoesNotClaimFinalAbsence(t *test
 		found.WorkflowID != "agent-run/v1/"+first.receipt.RunID {
 		t.Fatalf("post-commit inspect did not converge to one Run: found=%+v err=%v", found, err)
 	}
+	principalFound, err := postgres.New(pool).LookupIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
+	if err != nil || principalFound != found {
+		t.Fatalf("principal-bound inspect did not recover the committed Run: %+v %v", principalFound, err)
+	}
+
 	replay, err := postgres.New(pool).AcceptIntentWithPrincipal(ctx, testIntent(), trustedSnapshot())
 	if err != nil || replay.Created || replay.RunID != found.RunID ||
 		replay.WorkflowID != found.WorkflowID {
