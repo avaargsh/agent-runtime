@@ -447,8 +447,7 @@ func (s *Store) CreateOrGet(ctx context.Context, candidate run.Run) (run.Run, bo
 			run_id::text, tenant_id, agent_id, agent_release_id, session_id,
 			idempotency_key, request_digest, workflow_id, status, input,
 			created_at, updated_at
-	`,
-		runTable,
+	`, runTable),
 		candidate.ID,
 		candidate.TenantID,
 		candidate.AgentID,
@@ -475,8 +474,7 @@ func (s *Store) CreateOrGet(ctx context.Context, candidate run.Run) (run.Run, bo
 				created_at, available_at
 			)
 			VALUES ($1::uuid, $2, $3::uuid, $4, $5::jsonb, $6, $6)
-		`,
-			outboxTable,
+		`, outboxTable),
 			uuid.NewString(),
 			inserted.TenantID,
 			inserted.ID,
