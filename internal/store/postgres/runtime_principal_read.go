@@ -27,7 +27,7 @@ func (s *Store) GetRunPrincipalSnapshot(ctx context.Context, tenantID, runID str
 		!utf8.ValidString(tenantID) || strings.ContainsAny(tenantID, "\x00\r\n\t") {
 		return run.PrincipalSnapshot{}, run.ErrInvalidRequest
 	}
-	principalTable, runTable, _, err := s.runIntentRelations()
+	runTable, principalTable, _, err := s.runIntentRelations()
 	if err != nil {
 		return run.PrincipalSnapshot{}, err
 	}
