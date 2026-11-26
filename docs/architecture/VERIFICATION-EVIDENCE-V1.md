@@ -26,6 +26,8 @@ The manifest also requires a nonempty, unique, ordered `required_check_ids` list
 
 A report consists of `checks` and `evidence`. Evidence refs are `id`, `uri`, and lowercase `sha256`. PASS and FAIL need at least one valid referenced EvidenceRef; non-PASS requires a reason. Results do not contain caller-supplied `overall_status`.
 
+When artifact bytes have been fetched from an independently trusted source, callers can use `AssessWithEvidenceContent`. It runs the same structural assessment and verifies that the supplied byte slice for **every** EvidenceRef hashes to its declared SHA-256. Missing, extra or mismatched content returns an error with no verdict. The helper does not fetch URIs or prove that the source, manifest or storage is authentic/immutable; callers must enforce source authorization and read-size limits before supplying bytes.
+
 The pure assessment applies hard resource bounds before producing a verdict: at most 256 required/reported checks, 1,024 EvidenceRefs, 1,024 references per Check, and 4,096 check-to-evidence references across the entire Report. A single EvidenceRef may support multiple Checks, but reuse still counts toward the aggregate edge limit. Identity and reason strings are capped at 256 and 1,024 bytes respectively; EvidenceRef URIs are capped at 2,048 bytes. Exceeding any bound is a contract error with no verdict. These limits bound assessment work; they do not authenticate the manifest or prove evidence provenance.
 
 ## Deterministic verdicts
