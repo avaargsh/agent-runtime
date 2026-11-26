@@ -137,12 +137,12 @@ func TestAuthenticatedACPRecoversSameRunAfterRuntimeHandlerAndPoolRestart(t *tes
 		t.Fatalf("initial authenticated acceptance: status=%d body=%s", status, response)
 	}
 	var accepted struct {
-		Status     string `json:"status"`
-		TenantID   string `json:"tenant_id"`
+		Status      string `json:"status"`
+		TenantID    string `json:"tenant_id"`
 		RunIntentID string `json:"run_intent_id"`
-		RunID      string `json:"run_id"`
-		WorkflowID string `json:"workflow_id"`
-		Created    bool   `json:"created"`
+		RunID       string `json:"run_id"`
+		WorkflowID  string `json:"workflow_id"`
+		Created     bool   `json:"created"`
 	}
 	if err := json.Unmarshal(response, &accepted); err != nil {
 		t.Fatal(err)
