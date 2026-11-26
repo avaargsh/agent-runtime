@@ -102,11 +102,12 @@ func TestLookupIntentIgnoresPgTempRunShadow(t *testing.T) {
 
 	shadowPool := newPgTempShadowPool(t, pool)
 	forgedDigest := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if _, err := shadowPool.Exec(ctx, `
-		CREATE TEMP TABLE runs AS TABLE runs;
-		UPDATE runs SET source_request_digest=$1 WHERE run_intent_id=$2::uuid
-	`, forgedDigest, command.RunIntentID); err != nil {
-		t.Fatalf("create forged temporary Run binding: %v", err)
+	if _, err := shadowPool.Exec(ctx, "CREATE TEMP TABLE runs AS TABLE runs"); err != nil {
+		t.Fatalf("create temporary Run shadow: %v", err)
+	}
+	if _, err := shadowPool.Exec(ctx, "UPDATE pg_temp.runs SET source_request_digest=$1 WHERE run_intent_id=$2::uuid",
+		forgedDigest, command.RunIntentID); err != nil {
+		t.Fatalf("forge temporary Run digest: %v", err)
 	}
 	found, err := postgres.New(shadowPool).LookupIntent(ctx, command.TenantID, command.RunIntentID, forgedDigest)
 	if !errors.Is(err, run.ErrIdempotencyConflict) || found != (run.IntentReceipt{}) {
