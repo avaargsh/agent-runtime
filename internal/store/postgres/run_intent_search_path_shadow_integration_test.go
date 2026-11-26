@@ -116,7 +116,6 @@ func TestLookupIntentIgnoresPgTempRunShadow(t *testing.T) {
 	}
 }
 
-
 func TestGetRunPrincipalSnapshotIgnoresPgTempPrincipalShadow(t *testing.T) {
 	pool, store := newTestStore(t)
 	ctx := context.Background()
