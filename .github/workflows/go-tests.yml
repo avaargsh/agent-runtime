@@ -33,6 +33,9 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+      # Exercise the root Makefile. This does not replace the checks above or below.
+      - name: Makefile lint and build
+        run: make lint build
       - name: Run tests with race detector
         run: go test -race -count=1 ./...
       - name: Vet
