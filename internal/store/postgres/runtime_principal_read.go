@@ -27,17 +27,21 @@ func (s *Store) GetRunPrincipalSnapshot(ctx context.Context, tenantID, runID str
 		!utf8.ValidString(tenantID) || strings.ContainsAny(tenantID, "\x00\r\n\t") {
 		return run.PrincipalSnapshot{}, run.ErrInvalidRequest
 	}
+	runTable, principalTable, _, err := s.runIntentRelations()
+	if err != nil {
+		return run.PrincipalSnapshot{}, err
+	}
 	var snapshot run.PrincipalSnapshot
-	err = s.pool.QueryRow(ctx, `
+	err = s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT p.snapshot_version, p.issuer_spiffe_id, p.project_id,
 		       p.subject_id, p.actor_id, p.policy_revision, p.config_digest
-		FROM runtime_run_principal_snapshots AS p
-		JOIN runs AS r ON r.run_id = p.run_id AND r.tenant_id = p.tenant_id
+		FROM %s AS p
+		JOIN %s AS r ON r.run_id = p.run_id AND r.tenant_id = p.tenant_id
 		WHERE p.run_id = $1::uuid AND p.tenant_id = $2
 		  AND r.run_intent_id IS NOT NULL
 		  AND r.source_request_digest IS NOT NULL
 		  AND r.workflow_id = 'agent-run/v1/' || r.run_id::text
-	`, runID, tenantID).Scan(
+	`, principalTable, runTable), runID, tenantID).Scan(
 		&snapshot.Version, &snapshot.IssuerSPIFFEID, &snapshot.ProjectID,
 		&snapshot.SubjectID, &snapshot.ActorID, &snapshot.PolicyRevision,
 		&snapshot.ConfigDigest,

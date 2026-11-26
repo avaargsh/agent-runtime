@@ -45,13 +45,17 @@ func (s *Store) ClaimRuntimeStart(ctx context.Context, owner string, ttl time.Du
 	if !validRuntimeStartOwner(owner) || ttl < time.Microsecond {
 		return RuntimeStartLease{}, false, ErrInvalidRuntimeStartLease
 	}
+	runTable, principalTable, outboxTable, err := s.runIntentRelations()
+	if err != nil {
+		return RuntimeStartLease{}, false, err
+	}
 	var lease RuntimeStartLease
-	err := s.pool.QueryRow(ctx, `
+	query := fmt.Sprintf(`
 		WITH candidate AS (
 			SELECT o.outbox_id
-			FROM runtime_outbox AS o
-			JOIN runs AS r ON r.run_id = o.aggregate_id AND r.tenant_id = o.tenant_id
-			JOIN runtime_run_principal_snapshots AS p
+			FROM %s AS o
+			JOIN %s AS r ON r.run_id = o.aggregate_id AND r.tenant_id = o.tenant_id
+			JOIN %s AS p
 			  ON p.run_id = r.run_id AND p.tenant_id = r.tenant_id
 			WHERE o.event_type = 'RUN_START_REQUESTED'
 			  AND r.status IN ('QUEUED','RUNNING')
@@ -71,16 +75,17 @@ func (s *Store) ClaimRuntimeStart(ctx context.Context, owner string, ttl time.Du
 			ORDER BY o.available_at, o.created_at, o.outbox_id
 			LIMIT 1 FOR UPDATE OF o SKIP LOCKED
 		)
-		UPDATE runtime_outbox AS o
+		UPDATE %s AS o
 		SET attempts = o.attempts + 1,
 			lease_owner = $1,
 			lease_expires_at = clock_timestamp() + ($2::bigint * interval '1 microsecond')
-		FROM candidate, runs AS r
+		FROM candidate, %s AS r
 		WHERE o.outbox_id = candidate.outbox_id AND r.run_id = o.aggregate_id
 		RETURNING o.outbox_id::text, o.tenant_id, r.run_intent_id::text,
 			r.source_request_digest, r.run_id::text, r.workflow_id,
 			o.lease_owner, o.attempts
-	`, owner, ttl.Microseconds(), maxRuntimeStartAttempts).Scan(
+	`, outboxTable, runTable, principalTable, outboxTable, runTable)
+	err = s.pool.QueryRow(ctx, query, owner, ttl.Microseconds(), maxRuntimeStartAttempts).Scan(
 		&lease.OutboxID, &lease.TenantID, &lease.RunIntentID,
 		&lease.RequestDigest, &lease.RunID, &lease.WorkflowID,
 		&lease.Owner, &lease.Attempt,
@@ -106,15 +111,19 @@ func (s *Store) AcknowledgeRuntimeStart(ctx context.Context, lease RuntimeStartL
 	if !validRuntimeStartLease(lease) {
 		return ErrInvalidRuntimeStartLease
 	}
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE runtime_outbox
+	_, _, outboxTable, err := s.runIntentRelations()
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, fmt.Sprintf(`
+		UPDATE %s
 		SET delivered_at = clock_timestamp(), lease_owner = NULL,
 			lease_expires_at = NULL, last_error = NULL
 		WHERE outbox_id = $1::uuid AND tenant_id = $2
 		  AND aggregate_id = $3::uuid AND event_type = 'RUN_START_REQUESTED'
 		  AND delivered_at IS NULL AND attempts = $4
 		  AND lease_owner = $5 AND lease_expires_at > clock_timestamp()
-	`, lease.OutboxID, lease.TenantID, lease.RunID, lease.Attempt, lease.Owner)
+	`, outboxTable), lease.OutboxID, lease.TenantID, lease.RunID, lease.Attempt, lease.Owner)
 	if err != nil {
 		return fmt.Errorf("acknowledge Runtime start Outbox: %w", err)
 	}
@@ -133,8 +142,12 @@ func (s *Store) ReleaseRuntimeStart(ctx context.Context, lease RuntimeStartLease
 	if !validRuntimeStartLease(lease) || retryDelay < time.Microsecond {
 		return ErrInvalidRuntimeStartLease
 	}
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE runtime_outbox
+	_, _, outboxTable, err := s.runIntentRelations()
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, fmt.Sprintf(`
+		UPDATE %s
 		SET available_at = clock_timestamp() + ($6::bigint * interval '1 microsecond'),
 			lease_owner = NULL, lease_expires_at = NULL,
 			last_error = 'TEMPORAL_ACK_UNCERTAIN'
@@ -142,7 +155,7 @@ func (s *Store) ReleaseRuntimeStart(ctx context.Context, lease RuntimeStartLease
 		  AND aggregate_id = $3::uuid AND event_type = 'RUN_START_REQUESTED'
 		  AND delivered_at IS NULL AND attempts = $4
 		  AND lease_owner = $5 AND lease_expires_at > clock_timestamp()
-	`, lease.OutboxID, lease.TenantID, lease.RunID, lease.Attempt, lease.Owner, retryDelay.Microseconds())
+	`, outboxTable), lease.OutboxID, lease.TenantID, lease.RunID, lease.Attempt, lease.Owner, retryDelay.Microseconds())
 	if err != nil {
 		return fmt.Errorf("release Runtime start Outbox: %w", err)
 	}

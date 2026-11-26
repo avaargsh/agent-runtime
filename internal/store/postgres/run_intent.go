@@ -41,6 +41,10 @@ func (s *Store) acceptIntent(ctx context.Context, command run.IntentStartRequest
 	if err != nil {
 		return run.IntentReceipt{}, run.ErrInvalidRequest
 	}
+	runTable, principalTable, outboxTable, err := s.runIntentRelations()
+	if err != nil {
+		return run.IntentReceipt{}, err
+	}
 	id := uuid.NewString()
 	workflow := run.ACPWorkflowPrefix + id
 	// Namespace the submission key so generic experimental StartRun callers
@@ -54,38 +58,38 @@ func (s *Store) acceptIntent(ctx context.Context, command run.IntentStartRequest
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	var storedID, storedWorkflow string
-	err = tx.QueryRow(ctx, `
-       INSERT INTO runs
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
+       INSERT INTO %s
        (run_id,tenant_id,agent_id,agent_release_id,session_id,
         idempotency_key,request_digest,workflow_id,status,input,
         created_at,updated_at,run_intent_id,source_request_digest)
        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,'QUEUED',$9::jsonb,$10,$10,$11::uuid,$12)
        ON CONFLICT DO NOTHING
        RETURNING run_id::text,workflow_id
-    `, id, command.TenantID, command.AgentID, command.AgentReleaseID,
+    `, runTable), id, command.TenantID, command.AgentID, command.AgentReleaseID,
 		command.SessionID, idem, digestHex, workflow, string(input), now,
 		command.RunIntentID, command.RequestDigest).Scan(&storedID, &storedWorkflow)
 	if err == nil {
 		if principal != nil {
-			_, err = tx.Exec(ctx, `
-				INSERT INTO runtime_run_principal_snapshots
+			_, err = tx.Exec(ctx, fmt.Sprintf(`
+				INSERT INTO %s
 				(run_id, tenant_id, issuer_spiffe_id, snapshot_version,
 				 project_id, subject_id, actor_id, policy_revision, config_digest)
 				VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9)
-			`, storedID, command.TenantID, principal.IssuerSPIFFEID,
+			`, principalTable), storedID, command.TenantID, principal.IssuerSPIFFEID,
 				principal.Version, principal.ProjectID, principal.SubjectID,
 				principal.ActorID, principal.PolicyRevision, principal.ConfigDigest)
 			if err != nil {
 				return run.IntentReceipt{}, fmt.Errorf("insert immutable ACP principal snapshot: %w", err)
 			}
 		}
-		_, err = tx.Exec(ctx, `
-           INSERT INTO runtime_outbox
+		_, err = tx.Exec(ctx, fmt.Sprintf(`
+           INSERT INTO %s
            (outbox_id,tenant_id,aggregate_id,event_type,payload,created_at,available_at)
            VALUES ($1::uuid,$2,$3::uuid,$4,
               jsonb_build_object('tenant_id',$2::text,'run_intent_id',$5::text,
                  'request_digest',$6::text,'run_id',$3::text,'workflow_id',$7::text),
-              $8,$8)`,
+              $8,$8)`, outboxTable),
 			uuid.NewString(), command.TenantID, storedID, runStartEventType,
 			command.RunIntentID, command.RequestDigest, storedWorkflow, now)
 		if err != nil {
@@ -102,16 +106,16 @@ func (s *Store) acceptIntent(ctx context.Context, command run.IntentStartRequest
 	}
 	// Acceptance must inspect the globally unique RunIntent identifier: a
 	// foreign-tenant reuse is a conflict, not permission to allocate a Run.
-	receipt, err := lookupIntentRow(ctx, tx, command.TenantID, command.RunIntentID, command.RequestDigest, false)
+	receipt, err := lookupIntentRow(ctx, tx, runTable, command.TenantID, command.RunIntentID, command.RequestDigest, false)
 	if err != nil {
 		return run.IntentReceipt{}, err
 	}
 	var agent, release, session string
 	var sameInput bool
-	err = tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
        SELECT agent_id,agent_release_id,session_id,input=$2::jsonb
-       FROM runs WHERE run_intent_id=$1::uuid FOR UPDATE
-    `, command.RunIntentID, string(input)).Scan(&agent, &release, &session, &sameInput)
+       FROM %s WHERE run_intent_id=$1::uuid FOR UPDATE
+    `, runTable), command.RunIntentID, string(input)).Scan(&agent, &release, &session, &sameInput)
 	if err != nil {
 		return run.IntentReceipt{}, fmt.Errorf("verify ACP Run binding: %w", err)
 	}
@@ -120,12 +124,12 @@ func (s *Store) acceptIntent(ctx context.Context, command run.IntentStartRequest
 		return run.IntentReceipt{}, run.ErrIdempotencyConflict
 	}
 	var bound run.PrincipalSnapshot
-	err = tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT snapshot_version, issuer_spiffe_id, project_id, subject_id,
 		       actor_id, policy_revision, config_digest
-		FROM runtime_run_principal_snapshots
+		FROM %s
 		WHERE run_id=$1::uuid AND tenant_id=$2
-	`, receipt.RunID, command.TenantID).Scan(
+	`, principalTable), receipt.RunID, command.TenantID).Scan(
 		&bound.Version, &bound.IssuerSPIFFEID, &bound.ProjectID,
 		&bound.SubjectID, &bound.ActorID, &bound.PolicyRevision, &bound.ConfigDigest,
 	)
@@ -168,19 +172,23 @@ func (s *Store) LookupIntent(ctx context.Context, tenantID, intentID, digest str
 	}
 	// Read-only Inspect is tenant-scoped so a foreign RunIntent identifier is
 	// indistinguishable from one that was never committed in this tenant.
-	return lookupIntentRow(ctx, s.pool, tenantID, intentID, digest, true)
+	runTable, _, _, err := s.runIntentRelations()
+	if err != nil {
+		return run.IntentReceipt{}, err
+	}
+	return lookupIntentRow(ctx, s.pool, runTable, tenantID, intentID, digest, true)
 }
 
 type intentRow interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-func lookupIntentRow(ctx context.Context, q intentRow, tenantID, intentID, digest string, tenantScoped bool) (run.IntentReceipt, error) {
+func lookupIntentRow(ctx context.Context, q intentRow, runTable, tenantID, intentID, digest string, tenantScoped bool) (run.IntentReceipt, error) {
 	var id, workflow, tenant, source string
-	query := `
+	query := fmt.Sprintf(`
         SELECT run_id::text,workflow_id,tenant_id,source_request_digest
-        FROM runs WHERE run_intent_id=$1::uuid
-    `
+        FROM %s WHERE run_intent_id=$1::uuid
+    `, runTable)
 	args := []any{intentID}
 	if tenantScoped {
 		// Filter at the database read boundary; post-read conflict handling

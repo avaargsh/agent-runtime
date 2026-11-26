@@ -422,6 +422,10 @@ func (s *Store) CreateOrGet(ctx context.Context, candidate run.Run) (run.Run, bo
 	if err := validateCandidate(candidate); err != nil {
 		return run.Run{}, false, err
 	}
+	runTable, _, outboxTable, err := s.runIntentRelations()
+	if err != nil {
+		return run.Run{}, false, err
+	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -429,8 +433,8 @@ func (s *Store) CreateOrGet(ctx context.Context, candidate run.Run) (run.Run, bo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	inserted, err := scanRun(tx.QueryRow(ctx, `
-		INSERT INTO runs (
+	inserted, err := scanRun(tx.QueryRow(ctx, fmt.Sprintf(`
+		INSERT INTO %s (
 			run_id, tenant_id, agent_id, agent_release_id, session_id,
 			idempotency_key, request_digest, workflow_id, status, input,
 			created_at, updated_at
@@ -443,7 +447,7 @@ func (s *Store) CreateOrGet(ctx context.Context, candidate run.Run) (run.Run, bo
 			run_id::text, tenant_id, agent_id, agent_release_id, session_id,
 			idempotency_key, request_digest, workflow_id, status, input,
 			created_at, updated_at
-	`,
+	`, runTable),
 		candidate.ID,
 		candidate.TenantID,
 		candidate.AgentID,
@@ -464,13 +468,13 @@ func (s *Store) CreateOrGet(ctx context.Context, candidate run.Run) (run.Run, bo
 		if marshalErr != nil {
 			return run.Run{}, false, fmt.Errorf("marshal Run start outbox payload: %w", marshalErr)
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO runtime_outbox (
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s (
 				outbox_id, tenant_id, aggregate_id, event_type, payload,
 				created_at, available_at
 			)
 			VALUES ($1::uuid, $2, $3::uuid, $4, $5::jsonb, $6, $6)
-		`,
+		`, outboxTable),
 			uuid.NewString(),
 			inserted.TenantID,
 			inserted.ID,
@@ -489,15 +493,15 @@ func (s *Store) CreateOrGet(ctx context.Context, candidate run.Run) (run.Run, bo
 		return run.Run{}, false, fmt.Errorf("insert Run: %w", err)
 	}
 
-	existing, err := scanRun(tx.QueryRow(ctx, `
+	existing, err := scanRun(tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT
 			run_id::text, tenant_id, agent_id, agent_release_id, session_id,
 			idempotency_key, request_digest, workflow_id, status, input,
 			created_at, updated_at
-		FROM runs
+		FROM %s
 		WHERE tenant_id = $1 AND idempotency_key = $2
 		FOR UPDATE
-	`, candidate.TenantID, candidate.IdempotencyKey))
+	`, runTable), candidate.TenantID, candidate.IdempotencyKey))
 	if err != nil {
 		return run.Run{}, false, fmt.Errorf("load existing idempotent Run: %w", err)
 	}
