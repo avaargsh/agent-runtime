@@ -19,7 +19,7 @@
 .PHONY: help lint test build clean require-go
 
 # Recipes, and any Go command they invoke, stay on the installed toolchain.
-export GOTOOLCHAIN := local
+override export GOTOOLCHAIN := local
 
 # Keep build and clean inside the documented repository-local output directory.
 override BIN_DIR := bin
