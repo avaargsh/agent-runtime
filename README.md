@@ -30,14 +30,21 @@ for repository verification. For comparable local checks, select Go 1.26.11
 and run from a clean checkout:
 
 ```sh
-export GOTOOLCHAIN=local
-test "$(go env GOVERSION)" = "go1.26.11"
-go mod verify
-go mod tidy
-git diff --exit-code -- go.mod go.sum
-go test -race -count=1 ./...
-go vet ./...
-test -z "$(gofmt -l cmd internal)"
+(
+  set -e
+  export GOTOOLCHAIN=local
+  actual_go=$(go env GOVERSION)
+  if [ "$actual_go" != "go1.26.11" ]; then
+    printf 'Expected Go 1.26.11 for CI comparison; found %s.\n' "$actual_go" >&2
+    exit 1
+  fi
+  go mod verify
+  go mod tidy
+  git diff --exit-code -- go.mod go.sum
+  go test -race -count=1 ./...
+  go vet ./...
+  test -z "$(gofmt -l cmd internal)"
+)
 ```
 
 A pass using another SDK is not a reproduction of the pinned CI toolchain.
